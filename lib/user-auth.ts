@@ -10,7 +10,7 @@
  */
 
 import { cookies } from 'next/headers'
-import { supabase } from './supabase'
+import { isSupabaseConfigured, supabase } from './supabase'
 import { normalizePhoneNumber, validateAnyPhoneNumber } from './phone-formatter'
 
 function getFirstName(fullName: string): string {
@@ -136,35 +136,48 @@ async function setStoredSessions(sessions: StoredSession[]): Promise<void> {
   await upsertSetting('session_tokens', JSON.stringify(sessions))
 }
 
+async function hasCompanyInDatabase(): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from('settings')
+      .select('key, value')
+      .eq('key', 'company_name')
+      .single()
+
+    if (error) {
+      console.warn('[isSetupComplete] settings/company_name query error:', error.message)
+      return false
+    }
+    return !!data?.value
+  } catch {
+    return false
+  }
+}
+
+function mapAuthErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    const msg = error.message
+    if (msg.includes('Supabase not configured')) {
+      return 'Banco de dados não configurado. Verifique SUPABASE_SECRET_KEY e NEXT_PUBLIC_SUPABASE_URL.'
+    }
+    if (msg.includes('Falha ao salvar setting')) {
+      return 'Falha ao persistir sessão. Verifique permissões do Supabase (service role key).'
+    }
+    if (/fetch|network|ECONNREFUSED/i.test(msg)) {
+      return 'Banco de dados indisponível. Tente novamente em instantes.'
+    }
+  }
+  return 'Erro ao fazer login'
+}
+
 /**
  * Check if setup is completed (company exists)
  */
 export async function isSetupComplete(): Promise<boolean> {
-  // Em produção, usamos a env var para evitar consultas e loops.
   if (process.env.SETUP_COMPLETE === 'true') return true
 
-  // Em dev/local, o fluxo pode rodar sem Vercel.
-  // Então consideramos "setup completo" se a empresa já foi gravada no banco.
-  if (process.env.NODE_ENV !== 'production') {
-    try {
-      const { data, error } = await supabase
-        .from('settings')
-        .select('key, value')
-        .eq('key', 'company_name')
-        .single()
-
-      if (error) {
-        // Ajuda a diagnosticar "isSetup:false" causado por permissão negada.
-        console.warn('[isSetupComplete] settings/company_name query error:', error.message)
-        return false
-      }
-      return !!data?.value
-    } catch {
-      return false
-    }
-  }
-
-  return false
+  // Fallback em dev e prod: empresa gravada no banco (ex.: redeploy sem SETUP_COMPLETE sincronizado)
+  return hasCompanyInDatabase()
 }
 
 /**
@@ -372,18 +385,12 @@ export async function loginUser(password: string): Promise<UserAuthResult> {
 
   // Check if MASTER_PASSWORD is configured
   const masterPassword = process.env.MASTER_PASSWORD
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H1',location:'lib/user-auth.ts:374',message:'MASTER_PASSWORD presence',data:{hasMasterPassword:!!masterPassword,masterLength:masterPassword?masterPassword.length:0,passwordLength:password.length},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   if (!masterPassword) {
     return { success: false, error: 'MASTER_PASSWORD não configurada nas variáveis de ambiente' }
   }
 
   // Check rate limiting
   const isLocked = await checkRateLimiting()
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H4',location:'lib/user-auth.ts:381',message:'Rate limit status',data:{isLocked},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   if (isLocked) {
     return { success: false, error: 'Muitas tentativas. Tente novamente em 15 minutos.' }
   }
@@ -391,9 +398,6 @@ export async function loginUser(password: string): Promise<UserAuthResult> {
   try {
     // Detecta automaticamente se MASTER_PASSWORD é hash ou texto puro
     const masterIsHash = isHashFormat(masterPassword)
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2',location:'lib/user-auth.ts:387',message:'MASTER_PASSWORD format detection',data:{masterIsHash,masterLength:masterPassword.length},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
 
     let isValid: boolean
     if (masterIsHash) {
@@ -404,9 +408,6 @@ export async function loginUser(password: string): Promise<UserAuthResult> {
       // Novo: MASTER_PASSWORD é texto puro, compara diretamente
       isValid = password === masterPassword
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/1294d6ce-76f2-430d-96ab-3ae4d7527327',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'pre-fix',hypothesisId:'H2',location:'lib/user-auth.ts:395',message:'Password validation result',data:{masterIsHash,isValid},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
 
     if (!isValid) {
       await recordFailedAttempt()
@@ -424,7 +425,7 @@ export async function loginUser(password: string): Promise<UserAuthResult> {
 
   } catch (error) {
     console.error('Login error:', error)
-    return { success: false, error: 'Erro ao fazer login' }
+    return { success: false, error: mapAuthErrorMessage(error) }
   }
 }
 
@@ -464,6 +465,10 @@ export async function logoutUser(): Promise<void> {
  * Create a new session
  */
 async function createSession(): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase not configured. Complete setup at /install')
+  }
+
   const cookieStore = await cookies()
   const sessionToken = crypto.randomUUID()
 

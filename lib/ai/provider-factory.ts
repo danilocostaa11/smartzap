@@ -17,8 +17,8 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { getAiGatewayConfig } from './ai-center-config'
 import { toGatewayModelId, type AiGatewayConfig } from './ai-center-defaults'
 import {
+  createOpenCodeGoChatModel,
   isOpenCodeGoModel,
-  OPENCODE_GO_BASE_URL,
   type AIProvider,
 } from './providers'
 
@@ -386,13 +386,8 @@ export async function createLanguageModel(
       break
     }
     case 'opencode-go': {
-      const { createOpenAI } = await import('@ai-sdk/openai')
-      const opencode = createOpenAI({
-        apiKey,
-        baseURL: OPENCODE_GO_BASE_URL,
-      })
-      model = opencode(modelId)
-      console.log(`[provider-factory] OpenCode Go direct: ${modelId}`)
+      model = await createOpenCodeGoChatModel(modelId, apiKey)
+      console.log(`[provider-factory] OpenCode Go chat: ${modelId}`)
       break
     }
     default:

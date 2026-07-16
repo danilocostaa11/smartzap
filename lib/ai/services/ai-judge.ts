@@ -3,7 +3,7 @@ import { JudgmentSchema, type Judgment } from '../schemas/template-schemas'
 import { buildUtilityJudgePrompt } from '../prompts/utility-judge'
 import { getAiPromptsConfig } from '../ai-center-config'
 import { getProviderFromModel, type AIProvider } from '../provider-factory'
-import { OPENCODE_GO_BASE_URL } from '../providers'
+import { createOpenCodeGoChatModel } from '../providers'
 import { DEFAULT_MODEL_ID } from '../model'
 
 // ============================================================================
@@ -35,8 +35,7 @@ async function createModelFromProvider(modelId: string, apiKey: string, provider
             return createAnthropic({ apiKey })(modelId)
         }
         case 'opencode-go': {
-            const { createOpenAI } = await import('@ai-sdk/openai')
-            return createOpenAI({ apiKey, baseURL: OPENCODE_GO_BASE_URL })(modelId)
+            return createOpenCodeGoChatModel(modelId, apiKey)
         }
         default:
             throw new Error(`Provider não suportado: ${provider}`)

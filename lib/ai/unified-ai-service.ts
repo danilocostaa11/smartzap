@@ -14,7 +14,7 @@
 import { generateText as vercelGenerateText, streamText as vercelStreamText } from 'ai';
 
 import { supabase } from '@/lib/supabase';
-import { type AIProvider, getDefaultModel, OPENCODE_GO_BASE_URL } from './providers';
+import { type AIProvider, createOpenCodeGoChatModel, getDefaultModel } from './providers';
 import { getAiFallbackConfig, getAiGatewayConfig } from './ai-center-config';
 import { toGatewayModelId, type AiGatewayConfig } from './ai-center-defaults';
 
@@ -271,9 +271,8 @@ async function getLanguageModel(
             };
         }
         case 'opencode-go': {
-            const { createOpenAI } = await import('@ai-sdk/openai');
             return {
-                model: createOpenAI({ apiKey, baseURL: OPENCODE_GO_BASE_URL })(modelId),
+                model: await createOpenCodeGoChatModel(modelId, apiKey),
                 gatewayEnabled: false,
             };
         }

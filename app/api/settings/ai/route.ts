@@ -8,7 +8,7 @@ import { clearSettingsCache } from '@/lib/ai'
 import { DEFAULT_AI_FALLBACK, DEFAULT_AI_GATEWAY, DEFAULT_AI_PROMPTS, DEFAULT_AI_ROUTES } from '@/lib/ai/ai-center-defaults'
 import { DEFAULT_MODEL_ID } from '@/lib/ai/model'
 import { DEFAULT_OCR_MODEL } from '@/lib/ai/ocr/providers/gemini'
-import { OPENCODE_GO_BASE_URL } from '@/lib/ai/providers'
+import { createOpenCodeGoChatModel, OPENCODE_GO_BASE_URL, OPENCODE_GO_DEFAULT_MODEL } from '@/lib/ai/providers'
 import {
   clearAiCenterCache,
   getAiFallbackConfig,
@@ -56,7 +56,7 @@ async function validateApiKey(provider: string, apiKey: string): Promise<Validat
                 break
             }
             case 'opencode-go': {
-                // Valida via listagem de modelos (não consome créditos de geração)
+                // Lista modelos (auth) + chat completion mínimo (mesmo path usado pelos agentes)
                 const response = await fetch(`${OPENCODE_GO_BASE_URL}/models`, {
                     headers: { Authorization: `Bearer ${apiKey}` },
                 })
@@ -66,7 +66,8 @@ async function validateApiKey(provider: string, apiKey: string): Promise<Validat
                     }
                     return { valid: false, error: `Erro na validação OpenCode Go: HTTP ${response.status}` }
                 }
-                return { valid: true }
+                model = await createOpenCodeGoChatModel(OPENCODE_GO_DEFAULT_MODEL, apiKey)
+                break
             }
             default:
                 return { valid: false, error: 'Provider desconhecido' }

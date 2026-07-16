@@ -14,6 +14,20 @@ export type AIProvider = 'google' | 'openai' | 'anthropic' | 'opencode-go';
 /** Base URL OpenAI-compatible do OpenCode Go */
 export const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1';
 
+/** Modelo padrão para validação e fallback OpenCode Go */
+export const OPENCODE_GO_DEFAULT_MODEL = 'deepseek-v4-flash';
+
+/**
+ * Cria modelo de chat OpenCode Go via Chat Completions API.
+ *
+ * @ai-sdk/openai v3 usa Responses API em `client(modelId)` → 404 no Zen Go.
+ * OpenCode Go só expõe `/v1/chat/completions` — use sempre `.chat(modelId)`.
+ */
+export async function createOpenCodeGoChatModel(modelId: string, apiKey: string) {
+    const { createOpenAI } = await import('@ai-sdk/openai');
+    return createOpenAI({ apiKey, baseURL: OPENCODE_GO_BASE_URL }).chat(modelId);
+}
+
 export interface AIModel {
     id: string;
     name: string;

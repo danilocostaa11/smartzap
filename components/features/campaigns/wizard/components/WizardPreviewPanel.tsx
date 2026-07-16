@@ -2,6 +2,7 @@ import React from 'react';
 import { Eye } from 'lucide-react';
 import { WhatsAppPhonePreview } from '@/components/ui/WhatsAppPhonePreview';
 import { WizardNavigation } from './WizardNavigation';
+import { resolveVarValue } from '@/lib/whatsapp/template-contract';
 import type { 
   Template, 
   Contact, 
@@ -72,22 +73,14 @@ export const WizardPreviewPanel: React.FC<WizardPreviewPanelProps> = ({
       customFields = allContacts[0].custom_fields || {};
     }
 
-    return values.map(val => {
-      if (val === '{{nome}}' || val === '{{contact.name}}' || val === '{{name}}') {
-        return contactName || val;
-      } else if (val === '{{telefone}}' || val === '{{contact.phone}}' || val === '{{phone}}') {
-        return contactPhone || val;
-      } else if (val === '{{email}}' || val === '{{contact.email}}') {
-        return contactEmail || val;
-      } else {
-        // Check for custom field tokens
-        const match = val.match(/^\{\{(\w+)\}\}$/);
-        if (match && customFields[match[1]] !== undefined) {
-          return String(customFields[match[1]]);
-        }
-      }
-      return val;
-    });
+    return values.map((val) =>
+      resolveVarValue(val, {
+        name: contactName,
+        phone: contactPhone,
+        email: contactEmail,
+        custom_fields: customFields,
+      })
+    );
   };
 
   const bodyVariables = resolveVariables(templateVariables.body);

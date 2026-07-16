@@ -349,7 +349,7 @@ export function StepTemplateConfig({
               <h3 className="text-sm font-bold text-[var(--ds-text-primary)]">Variáveis do Template</h3>
               <p className="text-xs text-[var(--ds-text-secondary)] mt-1">
                 Preencha os valores que serão usados neste template.
-                Esses valores serão <span className="text-[var(--ds-text-primary)]">iguais para todos</span> os destinatários.
+                Texto fixo é igual para todos; use o ícone {'{}'} para variáveis por contato (ex.: Nome).
               </p>
             </div>
           </div>

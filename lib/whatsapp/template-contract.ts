@@ -242,17 +242,42 @@ export function buildTemplateSpecV1(template: Template): TemplateSpecV1 {
   }
 }
 
-export function resolveVarValue(raw: string | undefined, contact: ContactLike): string {
+/**
+ * Normaliza tokens dinâmicos digitados pelo usuário.
+ * Aceita espaços em `{{ nome }}`, aliases `lead.name` / `contact.name`, etc.
+ * Tokens desconhecidos (texto fixo) permanecem iguais.
+ */
+export function canonicalizeVarToken(raw: string | undefined): string {
   const val = (raw ?? '').trim()
+  if (!val) return ''
+
+  const braced = val.match(/^\{\{\s*([\s\S]+?)\s*\}\}$/)
+  const inner = braced ? braced[1].trim().replace(/\s+/g, '') : null
+  const key = (inner ?? val).toLowerCase()
+
+  if (['nome', 'name', 'contact.name', 'lead.name'].includes(key)) return '{{nome}}'
+  if (['telefone', 'phone', 'contact.phone', 'lead.phone'].includes(key)) return '{{telefone}}'
+  if (['email', 'contact.email', 'lead.email'].includes(key)) return '{{email}}'
+
+  // Custom field: só remove espaços internos do {{ }}
+  if (inner !== null && /^[a-zA-Z0-9_]+$/.test(inner)) {
+    return `{{${inner}}}`
+  }
+
+  return val
+}
+
+export function resolveVarValue(raw: string | undefined, contact: ContactLike): string {
+  const val = canonicalizeVarToken(raw)
 
   // Tokens documentados internamente do SmartZap (não Meta): nomes em pt-BR + compat
-  if (val === '{{nome}}' || val === '{{name}}' || val === '{{contact.name}}') {
+  if (val === '{{nome}}') {
     return (contact.name || 'Cliente').trim()
   }
-  if (val === '{{telefone}}' || val === '{{phone}}' || val === '{{contact.phone}}') {
+  if (val === '{{telefone}}') {
     return (contact.phone || '').trim()
   }
-  if (val === '{{email}}' || val === '{{contact.email}}') {
+  if (val === '{{email}}') {
     const email = (contact.email ?? (contact.custom_fields as any)?.email ?? '')
     return String(email || '').trim()
   }
@@ -274,16 +299,16 @@ export function resolveVarValue(raw: string | undefined, contact: ContactLike): 
 // Versão “estrita” usada APENAS no pré-check.
 // Objetivo: detectar valores realmente ausentes, sem fallback cosmético (ex.: nome → "Cliente").
 function resolveVarValueForPrecheck(raw: string | undefined, contact: ContactLike): string {
-  const val = (raw ?? '').trim()
+  const val = canonicalizeVarToken(raw)
 
   // Tokens documentados internamente do SmartZap (não Meta): nomes em pt-BR + compat
-  if (val === '{{nome}}' || val === '{{name}}' || val === '{{contact.name}}') {
+  if (val === '{{nome}}') {
     return String(contact.name || '').trim()
   }
-  if (val === '{{telefone}}' || val === '{{phone}}' || val === '{{contact.phone}}') {
+  if (val === '{{telefone}}') {
     return String(contact.phone || '').trim()
   }
-  if (val === '{{email}}' || val === '{{contact.email}}') {
+  if (val === '{{email}}') {
     const email = (contact.email ?? (contact.custom_fields as any)?.email ?? '')
     return String(email || '').trim()
   }

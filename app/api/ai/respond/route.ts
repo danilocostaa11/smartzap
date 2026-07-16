@@ -17,6 +17,8 @@ import { processChatAgent, type ContactContext } from '@/lib/ai/agents/chat-agen
 import { sendWhatsAppMessage, sendTypingIndicator } from '@/lib/whatsapp-send'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { redis } from '@/lib/redis'
+import { unauthorizedResponse } from '@/lib/auth'
+import { verifyQStashOrApiKey } from '@/lib/qstash-request-auth'
 import type { AIAgent } from '@/types'
 
 // Fluid Compute: 5 minutos de timeout (suficiente para IA)
@@ -46,8 +48,15 @@ export async function POST(req: NextRequest) {
   console.log(`🤖 [AI-RESPOND] Request received at ${new Date().toISOString()}`)
 
   try {
+    const rawBody = await req.text()
+    const auth = await verifyQStashOrApiKey(req, rawBody)
+    if (!auth.valid) {
+      console.log(`❌ [AI-RESPOND] Unauthorized: ${auth.error}`)
+      return unauthorizedResponse(auth.error)
+    }
+
     // 1. Parse request
-    const body = (await req.json()) as AIRespondRequest
+    const body = JSON.parse(rawBody) as AIRespondRequest
     const { conversationId, debounceMs } = body
 
     if (!conversationId) {

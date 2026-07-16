@@ -12,6 +12,7 @@ const LLM_API_KEY_MAP: Record<AIProvider, { settingKey: string; envVar: string }
   google: { settingKey: 'gemini_api_key', envVar: 'GEMINI_API_KEY' },
   openai: { settingKey: 'openai_api_key', envVar: 'OPENAI_API_KEY' },
   anthropic: { settingKey: 'anthropic_api_key', envVar: 'ANTHROPIC_API_KEY' },
+  'opencode-go': { settingKey: 'opencode_go_api_key', envVar: 'OPENCODE_GO_API_KEY' },
 }
 
 /**

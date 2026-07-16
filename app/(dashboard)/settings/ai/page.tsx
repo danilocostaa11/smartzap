@@ -62,6 +62,7 @@ type AIConfigResponse = {
     google: ProviderStatus
     openai: ProviderStatus
     anthropic: ProviderStatus
+    'opencode-go': ProviderStatus
   }
   routes: AiRoutesConfig
   prompts: AiPromptsConfig
@@ -374,6 +375,10 @@ const API_KEY_URLS: Record<AIProvider | 'mistral', { url: string; label: string 
     url: 'https://console.anthropic.com/settings/keys',
     label: 'Anthropic Console',
   },
+  'opencode-go': {
+    url: 'https://opencode.ai/auth',
+    label: 'OpenCode Auth',
+  },
   mistral: {
     url: 'https://console.mistral.ai/api-keys/',
     label: 'Mistral Console',
@@ -576,6 +581,7 @@ export default function AICenterPage() {
     google: EMPTY_PROVIDER_STATUS,
     openai: EMPTY_PROVIDER_STATUS,
     anthropic: EMPTY_PROVIDER_STATUS,
+    'opencode-go': EMPTY_PROVIDER_STATUS,
   })
   const [provider, setProvider] = useState<AIProvider>('google')
   const [model, setModel] = useState(() => getDefaultModelId('google'))
@@ -587,6 +593,7 @@ export default function AICenterPage() {
     google: '',
     openai: '',
     anthropic: '',
+    'opencode-go': '',
   })
   const [isSavingKey, setIsSavingKey] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -604,9 +611,9 @@ export default function AICenterPage() {
 
   const orderedProviders = useMemo(() => {
     const allProviders = normalizeProviderOrder(fallback.order)
-    // Só mostra OpenAI e Anthropic no modo desenvolvedor
+    // OpenAI/Anthropic só no modo desenvolvedor; Google e OpenCode Go sempre
     if (!isDevMode) {
-      return allProviders.filter(p => p === 'google')
+      return allProviders.filter(p => p === 'google' || p === 'opencode-go')
     }
     return allProviders
   }, [fallback.order, isDevMode])
@@ -673,6 +680,7 @@ export default function AICenterPage() {
         google: data.providers?.google ?? EMPTY_PROVIDER_STATUS,
         openai: data.providers?.openai ?? EMPTY_PROVIDER_STATUS,
         anthropic: data.providers?.anthropic ?? EMPTY_PROVIDER_STATUS,
+        'opencode-go': data.providers?.['opencode-go'] ?? EMPTY_PROVIDER_STATUS,
       })
 
       // Load OCR configuration

@@ -354,7 +354,7 @@ export const settingsService = {
   /**
    * Remove API key for a specific provider (including mistral for OCR)
    */
-  removeAIKey: async (provider: 'google' | 'openai' | 'anthropic' | 'mistral') => {
+  removeAIKey: async (provider: 'google' | 'openai' | 'anthropic' | 'opencode-go' | 'mistral') => {
     const response = await fetch(`/api/settings/ai?provider=${provider}`, {
       method: 'DELETE',
     });

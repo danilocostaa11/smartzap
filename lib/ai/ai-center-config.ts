@@ -81,7 +81,7 @@ function normalizeGateway(input?: Partial<AiGatewayConfig> | null): AiGatewayCon
   const validFallbackModels = rawFallbackModels.filter((m) => {
     if (typeof m !== 'string') return false
     const parts = m.split('/')
-    return parts.length === 2 && ['google', 'openai', 'anthropic'].includes(parts[0])
+    return parts.length === 2 && ['google', 'openai', 'anthropic', 'opencode-go'].includes(parts[0])
   })
 
   return {

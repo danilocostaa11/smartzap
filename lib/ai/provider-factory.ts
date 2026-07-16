@@ -16,6 +16,13 @@ import type { LanguageModel } from 'ai'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { getAiGatewayConfig } from './ai-center-config'
 import { toGatewayModelId, type AiGatewayConfig } from './ai-center-defaults'
+import {
+  isOpenCodeGoModel,
+  OPENCODE_GO_BASE_URL,
+  type AIProvider,
+} from './providers'
+
+export type { AIProvider }
 
 // =============================================================================
 // Vercel AI Gateway Configuration
@@ -30,7 +37,7 @@ const AI_GATEWAY_BASE_URL = 'https://ai-gateway.vercel.sh/v1'
 // Helicone gateway config por provider
 // Para Google: usar gateway genérico + Helicone-Target-URL header
 // Para OpenAI/Anthropic: usar gateways dedicados
-const HELICONE_GATEWAYS: Record<AIProvider, { baseURL: string; targetURL?: string }> = {
+const HELICONE_GATEWAYS: Partial<Record<AIProvider, { baseURL: string; targetURL?: string }>> = {
   google: {
     baseURL: 'https://gateway.helicone.ai/v1beta',
     targetURL: 'https://generativelanguage.googleapis.com/v1beta',
@@ -41,6 +48,7 @@ const HELICONE_GATEWAYS: Record<AIProvider, { baseURL: string; targetURL?: strin
   anthropic: {
     baseURL: 'https://anthropic.helicone.ai/v1',
   },
+  // OpenCode Go: conexão direta (sem proxy Helicone)
 }
 
 /**
@@ -106,16 +114,17 @@ async function createGatewayModel(
 
   // BYOK: passa TODAS as chaves disponíveis para habilitar fallbacks
   if (gatewayConfig.useBYOK) {
-    const byokHeaderMap: Record<AIProvider, string> = {
+    const byokHeaderMap: Partial<Record<AIProvider, string>> = {
       google: 'x-google-api-key',
       openai: 'x-openai-api-key',
       anthropic: 'x-anthropic-api-key',
     }
 
-    // Passa todas as chaves que temos configuradas
+    // Passa todas as chaves que temos configuradas (exceto gateways externos)
     for (const [prov, key] of Object.entries(allApiKeys)) {
-      if (key) {
-        headers[byokHeaderMap[prov as AIProvider]] = key
+      const headerName = byokHeaderMap[prov as AIProvider]
+      if (key && headerName) {
+        headers[headerName] = key
       }
     }
 
@@ -138,8 +147,6 @@ async function createGatewayModel(
 // Types
 // =============================================================================
 
-export type AIProvider = 'google' | 'openai' | 'anthropic'
-
 export interface ProviderConfig {
   provider: AIProvider
   model: string
@@ -151,6 +158,7 @@ const PROVIDER_API_KEY_MAP: Record<AIProvider, { settingKey: string; envVar: str
   google: { settingKey: 'gemini_api_key', envVar: 'GEMINI_API_KEY' },
   openai: { settingKey: 'openai_api_key', envVar: 'OPENAI_API_KEY' },
   anthropic: { settingKey: 'anthropic_api_key', envVar: 'ANTHROPIC_API_KEY' },
+  'opencode-go': { settingKey: 'opencode_go_api_key', envVar: 'OPENCODE_GO_API_KEY' },
 }
 
 // =============================================================================
@@ -160,11 +168,13 @@ const PROVIDER_API_KEY_MAP: Record<AIProvider, { settingKey: string; envVar: str
 /**
  * Detecta o provider baseado no nome do modelo.
  *
+ * - catálogo OpenCode Go → opencode-go
  * - gemini-* → google
  * - gpt-* → openai
  * - claude-* → anthropic
  */
 export function getProviderFromModel(modelId: string): AIProvider {
+  if (isOpenCodeGoModel(modelId)) return 'opencode-go'
   if (modelId.startsWith('gemini')) return 'google'
   if (modelId.startsWith('gpt')) return 'openai'
   if (modelId.startsWith('claude')) return 'anthropic'
@@ -219,6 +229,7 @@ export async function getAllProviderApiKeys(): Promise<Partial<Record<AIProvider
         gemini_api_key: 'google',
         openai_api_key: 'openai',
         anthropic_api_key: 'anthropic',
+        opencode_go_api_key: 'opencode-go',
       }
 
       for (const setting of data) {
@@ -268,10 +279,12 @@ export async function createLanguageModel(
   const gatewayConfig = await getAiGatewayConfig()
 
   // Gateway requer OIDC token (disponível em Vercel ou via `vercel dev`)
+  // OpenCode Go é gateway externo próprio — sempre conexão direta
   const oidcToken = process.env.VERCEL_OIDC_TOKEN
-  const canUseGateway = gatewayConfig.enabled && oidcToken
+  const supportsVercelGateway = provider !== 'opencode-go'
+  const canUseGateway = gatewayConfig.enabled && !!oidcToken && supportsVercelGateway
 
-  if (gatewayConfig.enabled && !oidcToken) {
+  if (gatewayConfig.enabled && !oidcToken && supportsVercelGateway) {
     console.warn('[provider-factory] Gateway habilitado mas VERCEL_OIDC_TOKEN não encontrado. Usando conexão direta.')
   }
 
@@ -316,6 +329,7 @@ export async function createLanguageModel(
   const buildHeliconeHeaders = (prov: AIProvider) => {
     if (!heliconeConfig) return undefined
     const gateway = HELICONE_GATEWAYS[prov]
+    if (!gateway) return undefined
     return {
       'Helicone-Auth': `Bearer ${heliconeConfig.apiKey}`,
       ...(gateway.targetURL && { 'Helicone-Target-URL': gateway.targetURL }),
@@ -328,13 +342,13 @@ export async function createLanguageModel(
       const heliconeHeaders = buildHeliconeHeaders('google')
       const google = createGoogleGenerativeAI({
         apiKey,
-        ...(heliconeEnabled && {
+        ...(heliconeEnabled && HELICONE_GATEWAYS.google && {
           baseURL: HELICONE_GATEWAYS.google.baseURL,
           headers: heliconeHeaders,
         }),
       })
       model = google(modelId)
-      if (heliconeEnabled) {
+      if (heliconeEnabled && HELICONE_GATEWAYS.google) {
         console.log(`[provider-factory] Helicone proxy enabled for Google`)
       }
       break
@@ -344,13 +358,13 @@ export async function createLanguageModel(
       const heliconeHeaders = buildHeliconeHeaders('openai')
       const openai = createOpenAI({
         apiKey,
-        ...(heliconeEnabled && {
+        ...(heliconeEnabled && HELICONE_GATEWAYS.openai && {
           baseURL: HELICONE_GATEWAYS.openai.baseURL,
           headers: heliconeHeaders,
         }),
       })
       model = openai(modelId)
-      if (heliconeEnabled) {
+      if (heliconeEnabled && HELICONE_GATEWAYS.openai) {
         console.log(`[provider-factory] Helicone proxy enabled for OpenAI`)
       }
       break
@@ -360,15 +374,25 @@ export async function createLanguageModel(
       const heliconeHeaders = buildHeliconeHeaders('anthropic')
       const anthropic = createAnthropic({
         apiKey,
-        ...(heliconeEnabled && {
+        ...(heliconeEnabled && HELICONE_GATEWAYS.anthropic && {
           baseURL: HELICONE_GATEWAYS.anthropic.baseURL,
           headers: heliconeHeaders,
         }),
       })
       model = anthropic(modelId)
-      if (heliconeEnabled) {
+      if (heliconeEnabled && HELICONE_GATEWAYS.anthropic) {
         console.log(`[provider-factory] Helicone proxy enabled for Anthropic`)
       }
+      break
+    }
+    case 'opencode-go': {
+      const { createOpenAI } = await import('@ai-sdk/openai')
+      const opencode = createOpenAI({
+        apiKey,
+        baseURL: OPENCODE_GO_BASE_URL,
+      })
+      model = opencode(modelId)
+      console.log(`[provider-factory] OpenCode Go direct: ${modelId}`)
       break
     }
     default:
@@ -383,6 +407,7 @@ export async function createLanguageModel(
  */
 export function isSupportedModel(modelId: string): boolean {
   return (
+    isOpenCodeGoModel(modelId) ||
     modelId.startsWith('gemini') ||
     modelId.startsWith('gpt') ||
     modelId.startsWith('claude')

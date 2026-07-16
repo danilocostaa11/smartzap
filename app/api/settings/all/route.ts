@@ -189,7 +189,7 @@ async function fetchAISettings(): Promise<AISettingsData> {
     ?.from('settings')
     .select('key, value')
     .in('key', [
-      'gemini_api_key', 'openai_api_key', 'anthropic_api_key',
+      'gemini_api_key', 'openai_api_key', 'anthropic_api_key', 'opencode_go_api_key',
       'ai_provider', 'ai_model', 'ai_routes', 'ai_fallback', 'ai_prompts',
     ]) || { data: null }
 
@@ -202,12 +202,14 @@ async function fetchAISettings(): Promise<AISettingsData> {
     google: settingsMap.get('gemini_api_key') || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '',
     openai: settingsMap.get('openai_api_key') || process.env.OPENAI_API_KEY || '',
     anthropic: settingsMap.get('anthropic_api_key') || process.env.ANTHROPIC_API_KEY || '',
+    'opencode-go': settingsMap.get('opencode_go_api_key') || process.env.OPENCODE_GO_API_KEY || '',
   }
 
   const providerSources = {
     google: settingsMap.get('gemini_api_key') ? 'database' : (providerKeys.google ? 'env' : 'none'),
     openai: settingsMap.get('openai_api_key') ? 'database' : (providerKeys.openai ? 'env' : 'none'),
     anthropic: settingsMap.get('anthropic_api_key') ? 'database' : (providerKeys.anthropic ? 'env' : 'none'),
+    'opencode-go': settingsMap.get('opencode_go_api_key') ? 'database' : (providerKeys['opencode-go'] ? 'env' : 'none'),
   }
 
   const getPreview = (key: string) => key ? `${key.substring(0, 4)}...${key.substring(key.length - 4)}` : null
@@ -216,6 +218,7 @@ async function fetchAISettings(): Promise<AISettingsData> {
     google: getPreview(providerKeys.google),
     openai: getPreview(providerKeys.openai),
     anthropic: getPreview(providerKeys.anthropic),
+    'opencode-go': getPreview(providerKeys['opencode-go']),
   }
 
   return {
@@ -225,6 +228,7 @@ async function fetchAISettings(): Promise<AISettingsData> {
       google: { isConfigured: !!providerKeys.google, source: providerSources.google, tokenPreview: providerPreviews.google },
       openai: { isConfigured: !!providerKeys.openai, source: providerSources.openai, tokenPreview: providerPreviews.openai },
       anthropic: { isConfigured: !!providerKeys.anthropic, source: providerSources.anthropic, tokenPreview: providerPreviews.anthropic },
+      'opencode-go': { isConfigured: !!providerKeys['opencode-go'], source: providerSources['opencode-go'], tokenPreview: providerPreviews['opencode-go'] },
     },
     isConfigured: !!providerKeys[savedProvider as keyof typeof providerKeys],
     source: providerSources[savedProvider as keyof typeof providerSources],

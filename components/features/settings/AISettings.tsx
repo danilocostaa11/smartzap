@@ -24,6 +24,7 @@ interface AISettingsProps {
             google: ProviderStatus;
             openai: ProviderStatus;
             anthropic: ProviderStatus;
+            'opencode-go': ProviderStatus;
         };
     } | undefined;
     isLoading: boolean;
@@ -146,6 +147,8 @@ export const AISettings: React.FC<AISettingsProps> = ({
                 return 'https://platform.openai.com/api-keys';
             case 'anthropic':
                 return 'https://console.anthropic.com/settings/keys';
+            case 'opencode-go':
+                return 'https://opencode.ai/auth';
             default:
                 return '#';
         }
@@ -159,6 +162,8 @@ export const AISettings: React.FC<AISettingsProps> = ({
                 return 'sk-...';
             case 'anthropic':
                 return 'sk-ant-...';
+            case 'opencode-go':
+                return 'chave OpenCode Go...';
             default:
                 return 'Chave de API';
         }

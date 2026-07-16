@@ -1,5 +1,6 @@
 import { generateText } from 'ai'
 import { getProviderFromModel, type AIProvider } from '../provider-factory'
+import { OPENCODE_GO_BASE_URL } from '../providers'
 import { DEFAULT_MODEL_ID } from '../model'
 
 // ============================================================================
@@ -186,6 +187,10 @@ async function createModelFromProvider(modelId: string, apiKey: string, provider
         case 'anthropic': {
             const { createAnthropic } = await import('@ai-sdk/anthropic')
             return createAnthropic({ apiKey })(modelId)
+        }
+        case 'opencode-go': {
+            const { createOpenAI } = await import('@ai-sdk/openai')
+            return createOpenAI({ apiKey, baseURL: OPENCODE_GO_BASE_URL })(modelId)
         }
         default:
             throw new Error(`Provider não suportado: ${provider}`)

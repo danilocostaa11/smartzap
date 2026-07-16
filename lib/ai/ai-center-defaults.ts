@@ -51,9 +51,10 @@ export const DEFAULT_AI_ROUTES: AiRoutesConfig = {
 
 export const DEFAULT_AI_FALLBACK: AiFallbackConfig = {
   enabled: false,
-  order: ['google', 'openai', 'anthropic'],
+  order: ['google', 'opencode-go', 'openai', 'anthropic'],
   models: {
     google: 'gemini-3-flash-preview',
+    'opencode-go': 'deepseek-v4-flash',
     openai: 'gpt-5-mini',
     anthropic: 'claude-sonnet-4-5',
   },
@@ -87,7 +88,7 @@ export function fromGatewayModelId(gatewayModelId: string): { provider: AIProvid
   if (parts.length !== 2) return null
 
   const [provider, modelId] = parts
-  if (!['google', 'openai', 'anthropic'].includes(provider)) return null
+  if (!['google', 'openai', 'anthropic', 'opencode-go'].includes(provider)) return null
 
   return { provider: provider as AIProvider, modelId }
 }

@@ -14,7 +14,7 @@
 import { generateText as vercelGenerateText, streamText as vercelStreamText } from 'ai';
 
 import { supabase } from '@/lib/supabase';
-import { type AIProvider, getDefaultModel } from './providers';
+import { type AIProvider, getDefaultModel, OPENCODE_GO_BASE_URL } from './providers';
 import { getAiFallbackConfig, getAiGatewayConfig } from './ai-center-config';
 import { toGatewayModelId, type AiGatewayConfig } from './ai-center-defaults';
 
@@ -99,6 +99,7 @@ async function getAISettings(): Promise<AISettings> {
             google: process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '',
             openai: process.env.OPENAI_API_KEY || '',
             anthropic: process.env.ANTHROPIC_API_KEY || '',
+            'opencode-go': process.env.OPENCODE_GO_API_KEY || '',
         },
     };
 
@@ -112,7 +113,8 @@ async function getAISettings(): Promise<AISettings> {
                 'ai_model',
                 'gemini_api_key',
                 'openai_api_key',
-                'anthropic_api_key'
+                'anthropic_api_key',
+                'opencode_go_api_key',
             ]) || { data: null };
 
         if (settings && settings.length > 0) {
@@ -125,6 +127,7 @@ async function getAISettings(): Promise<AISettings> {
                 google: settingsMap.get('gemini_api_key') || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '',
                 openai: settingsMap.get('openai_api_key') || process.env.OPENAI_API_KEY || '',
                 anthropic: settingsMap.get('anthropic_api_key') || process.env.ANTHROPIC_API_KEY || '',
+                'opencode-go': settingsMap.get('opencode_go_api_key') || process.env.OPENCODE_GO_API_KEY || '',
             };
 
             const apiKey = providerKeys[provider] || '';
@@ -182,13 +185,15 @@ async function getLanguageModel(
     const gatewayConfig = await getAiGatewayConfig();
 
     // Gateway requer OIDC token (disponível em Vercel ou via `vercel dev`)
+    // OpenCode Go usa gateway próprio — sempre conexão direta
     const oidcToken = process.env.VERCEL_OIDC_TOKEN;
-    if (gatewayConfig.enabled) {
+    const supportsVercelGateway = providerId !== 'opencode-go';
+    if (gatewayConfig.enabled && supportsVercelGateway) {
         console.log(`[AI Service] VERCEL_OIDC_TOKEN ${oidcToken ? 'present' : 'missing'}`);
     }
-    const canUseGateway = gatewayConfig.enabled && oidcToken;
+    const canUseGateway = gatewayConfig.enabled && !!oidcToken && supportsVercelGateway;
 
-    if (gatewayConfig.enabled && !oidcToken) {
+    if (gatewayConfig.enabled && !oidcToken && supportsVercelGateway) {
         console.warn('[AI Service] Gateway habilitado mas VERCEL_OIDC_TOKEN não encontrado. Usando conexão direta.');
     }
 
@@ -206,18 +211,22 @@ async function getLanguageModel(
 
         // BYOK: passa a chave do provider se configurado
         if (gatewayConfig.useBYOK && apiKey) {
-            const byokHeaderMap: Record<AIProvider, string> = {
+            const byokHeaderMap: Partial<Record<AIProvider, string>> = {
                 google: 'x-google-api-key',
                 openai: 'x-openai-api-key',
                 anthropic: 'x-anthropic-api-key',
             };
-            headers[byokHeaderMap[providerId]] = apiKey;
+            const primaryHeader = byokHeaderMap[providerId];
+            if (primaryHeader) {
+                headers[primaryHeader] = apiKey;
+            }
 
             // Também adiciona chaves dos outros providers para fallback BYOK
             if (settings?.providerKeys) {
                 for (const [prov, key] of Object.entries(settings.providerKeys)) {
-                    if (key && prov !== providerId) {
-                        headers[byokHeaderMap[prov as AIProvider]] = key;
+                    const headerName = byokHeaderMap[prov as AIProvider];
+                    if (key && prov !== providerId && headerName) {
+                        headers[headerName] = key;
                     }
                 }
             }
@@ -258,6 +267,13 @@ async function getLanguageModel(
             const { createAnthropic } = await import('@ai-sdk/anthropic');
             return {
                 model: createAnthropic({ apiKey })(modelId),
+                gatewayEnabled: false,
+            };
+        }
+        case 'opencode-go': {
+            const { createOpenAI } = await import('@ai-sdk/openai');
+            return {
+                model: createOpenAI({ apiKey, baseURL: OPENCODE_GO_BASE_URL })(modelId),
                 gatewayEnabled: false,
             };
         }

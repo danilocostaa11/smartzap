@@ -8,6 +8,7 @@ import { clearSettingsCache } from '@/lib/ai'
 import { DEFAULT_AI_FALLBACK, DEFAULT_AI_GATEWAY, DEFAULT_AI_PROMPTS, DEFAULT_AI_ROUTES } from '@/lib/ai/ai-center-defaults'
 import { DEFAULT_MODEL_ID } from '@/lib/ai/model'
 import { DEFAULT_OCR_MODEL } from '@/lib/ai/ocr/providers/gemini'
+import { OPENCODE_GO_BASE_URL } from '@/lib/ai/providers'
 import {
   clearAiCenterCache,
   getAiFallbackConfig,
@@ -53,6 +54,19 @@ async function validateApiKey(provider: string, apiKey: string): Promise<Validat
                 const anthropic = createAnthropic({ apiKey })
                 model = anthropic('claude-3-haiku-20240307')
                 break
+            }
+            case 'opencode-go': {
+                // Valida via listagem de modelos (não consome créditos de geração)
+                const response = await fetch(`${OPENCODE_GO_BASE_URL}/models`, {
+                    headers: { Authorization: `Bearer ${apiKey}` },
+                })
+                if (!response.ok) {
+                    if (response.status === 401 || response.status === 403) {
+                        return { valid: false, error: 'Chave OpenCode Go inválida ou sem acesso. Obtenha em https://opencode.ai/auth' }
+                    }
+                    return { valid: false, error: `Erro na validação OpenCode Go: HTTP ${response.status}` }
+                }
+                return { valid: true }
             }
             default:
                 return { valid: false, error: 'Provider desconhecido' }
@@ -153,6 +167,7 @@ export async function GET() {
                 'gemini_api_key',
                 'openai_api_key',
                 'anthropic_api_key',
+                'opencode_go_api_key',
                 'mistral_api_key',
                 'ai_provider',
                 'ai_model',
@@ -183,6 +198,7 @@ export async function GET() {
             google: settingsMap.get('gemini_api_key') || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || '',
             openai: settingsMap.get('openai_api_key') || process.env.OPENAI_API_KEY || '',
             anthropic: settingsMap.get('anthropic_api_key') || process.env.ANTHROPIC_API_KEY || '',
+            'opencode-go': settingsMap.get('opencode_go_api_key') || process.env.OPENCODE_GO_API_KEY || '',
         }
 
         // Get source for each provider
@@ -190,6 +206,7 @@ export async function GET() {
             google: settingsMap.get('gemini_api_key') ? 'database' : (providerKeys.google ? 'env' : 'none'),
             openai: settingsMap.get('openai_api_key') ? 'database' : (providerKeys.openai ? 'env' : 'none'),
             anthropic: settingsMap.get('anthropic_api_key') ? 'database' : (providerKeys.anthropic ? 'env' : 'none'),
+            'opencode-go': settingsMap.get('opencode_go_api_key') ? 'database' : (providerKeys['opencode-go'] ? 'env' : 'none'),
         }
 
         // Get preview for each provider
@@ -199,6 +216,7 @@ export async function GET() {
             google: getPreview(providerKeys.google),
             openai: getPreview(providerKeys.openai),
             anthropic: getPreview(providerKeys.anthropic),
+            'opencode-go': getPreview(providerKeys['opencode-go']),
         }
 
         const routes = prepareAiRoutesUpdate(
@@ -248,6 +266,11 @@ export async function GET() {
                     isConfigured: !!providerKeys.anthropic,
                     source: providerSources.anthropic,
                     tokenPreview: providerPreviews.anthropic,
+                },
+                'opencode-go': {
+                    isConfigured: !!providerKeys['opencode-go'],
+                    source: providerSources['opencode-go'],
+                    tokenPreview: providerPreviews['opencode-go'],
                 },
             },
             // Legacy fields for backward compat (uses saved provider's key)
@@ -327,6 +350,9 @@ export async function POST(request: NextRequest) {
                     break
                 case 'anthropic':
                     keyName = 'anthropic_api_key'
+                    break
+                case 'opencode-go':
+                    keyName = 'opencode_go_api_key'
                     break
             }
 
@@ -474,9 +500,9 @@ export async function DELETE(request: NextRequest) {
         const { searchParams } = new URL(request.url)
         const provider = searchParams.get('provider')
 
-        if (!provider || !['google', 'openai', 'anthropic', 'mistral'].includes(provider)) {
+        if (!provider || !['google', 'openai', 'anthropic', 'opencode-go', 'mistral'].includes(provider)) {
             return NextResponse.json(
-                { error: 'Valid provider is required (google, openai, anthropic, mistral)' },
+                { error: 'Valid provider is required (google, openai, anthropic, opencode-go, mistral)' },
                 { status: 400 }
             )
         }
@@ -486,6 +512,7 @@ export async function DELETE(request: NextRequest) {
             google: 'gemini_api_key',
             openai: 'openai_api_key',
             anthropic: 'anthropic_api_key',
+            'opencode-go': 'opencode_go_api_key',
             mistral: 'mistral_api_key',
         }
 

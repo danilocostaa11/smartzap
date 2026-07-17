@@ -292,7 +292,7 @@ export async function POST(req: Request) {
         }),
       },
       // Force the model to use the respond tool
-      toolChoice: 'required',
+      toolChoice: 'auto',
       temperature: 0.7,
       maxOutputTokens: 2048,
     })

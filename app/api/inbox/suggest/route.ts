@@ -201,7 +201,7 @@ export async function POST(req: Request) {
           },
         }),
       },
-      toolChoice: 'required',
+      toolChoice: 'auto',
       temperature: 0.7,
       maxOutputTokens: 1024,
     })

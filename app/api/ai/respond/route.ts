@@ -68,25 +68,33 @@ export async function POST(req: NextRequest) {
 
     // 1.5. Verificação de debounce - usuário parou de digitar?
     // Verifica se passou tempo suficiente desde a ÚLTIMA MENSAGEM
+    // Fail-open: se Redis estiver fora (DNS/rede), processa mesmo assim
     if (debounceMs && debounceMs > 0 && redis) {
-      const redisKey = `ai:lastmsg:${conversationId}`
-      const lastMsgTimestamp = await redis.get<number>(redisKey)
+      try {
+        const redisKey = `ai:lastmsg:${conversationId}`
+        const lastMsgTimestamp = await redis.get<number>(redisKey)
 
-      if (lastMsgTimestamp) {
-        const now = Date.now()
-        const timeSinceLastMsg = now - lastMsgTimestamp
+        if (lastMsgTimestamp) {
+          const now = Date.now()
+          const timeSinceLastMsg = now - lastMsgTimestamp
 
-        // Se não passou tempo suficiente, usuário ainda está digitando
-        // Outro job (mais recente) vai processar
-        if (timeSinceLastMsg < debounceMs) {
-          console.log(`⏭️ [AI-RESPOND] Skipping - user still typing (${timeSinceLastMsg}ms < ${debounceMs}ms)`)
-          return NextResponse.json({ skipped: true, reason: 'user-still-typing' })
+          // Se não passou tempo suficiente, usuário ainda está digitando
+          // Outro job (mais recente) vai processar
+          if (timeSinceLastMsg < debounceMs) {
+            console.log(`⏭️ [AI-RESPOND] Skipping - user still typing (${timeSinceLastMsg}ms < ${debounceMs}ms)`)
+            return NextResponse.json({ skipped: true, reason: 'user-still-typing' })
+          }
+
+          // Passou tempo suficiente - usuário parou de digitar
+          // Limpa a chave e processa
+          await redis.del(redisKey)
+          console.log(`🤖 [AI-RESPOND] User stopped typing (${timeSinceLastMsg}ms >= ${debounceMs}ms) - processing`)
         }
-
-        // Passou tempo suficiente - usuário parou de digitar
-        // Limpa a chave e processa
-        await redis.del(redisKey)
-        console.log(`🤖 [AI-RESPOND] User stopped typing (${timeSinceLastMsg}ms >= ${debounceMs}ms) - processing`)
+      } catch (redisError) {
+        console.warn(
+          `⚠️ [AI-RESPOND] Redis debounce check failed (processing anyway):`,
+          redisError instanceof Error ? redisError.message : redisError
+        )
       }
     }
 

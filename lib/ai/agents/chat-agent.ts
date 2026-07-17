@@ -618,7 +618,9 @@ export async function processChatAgent(
         system: systemPrompt,
         messages: aiMessages,
         tools,
-        toolChoice: 'required', // FORÇA o LLM a chamar uma tool (respond)
+        // OpenCode Go / DeepSeek falha com tool_choice=required ("Upstream request failed").
+        // 'auto' ainda chama respond via system prompt + schema das tools.
+        toolChoice: 'auto',
         // Para quando respond for chamado OU após 3 steps (o que vier primeiro)
         stopWhen: (event) => stopCondition() || stepCountIs(3)(event),
         temperature: agent.temperature ?? DEFAULT_TEMPERATURE,

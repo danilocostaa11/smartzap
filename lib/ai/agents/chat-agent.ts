@@ -408,6 +408,16 @@ export async function processChatAgent(
     if (memoryContext.systemPromptAddition) {
       systemPrompt += `\n\n${memoryContext.systemPromptAddition}`
     }
+
+    // Obrigatório: a resposta final ao cliente SÓ vale se passar pela tool respond.
+    // Sem isso, modelos com toolChoice=auto às vezes respondem em texto puro e o inbox
+    // interpreta como falha → "dificuldades técnicas" + handoff.
+    systemPrompt += `\n\n## Formato de saída (obrigatório)
+- Toda resposta final ao cliente DEVE ser enviada pela tool \`respond\`.
+- Nunca responda só em texto livre: sempre chame \`respond\` com o campo \`message\`.
+- Se usar outras tools (busca, reação, etc.), chame \`respond\` em seguida com a resposta final.
+- Se não souber algo, ainda assim chame \`respond\` com uma resposta honesta e útil.`
+
     const responseSchema = getResponseSchema(handoffEnabled)
 
     console.log(`[chat-agent] Handoff enabled: ${handoffEnabled}`)
@@ -417,7 +427,8 @@ export async function processChatAgent(
     let shouldQuoteUserMessage = false // Setado pelo tool quoteMessage
 
     const respondTool = tool({
-      description: 'Envia uma resposta estruturada ao usuário. Use APENAS quando tiver a resposta final. NÃO use para respostas parciais.',
+      description:
+        'OBRIGATÓRIA para a resposta final ao usuário. Sempre chame esta tool com a mensagem completa. Nunca termine sem chamá-la.',
       inputSchema: responseSchema,
       execute: async (params) => {
         const handoffParams = params as { shouldHandoff?: boolean }
@@ -612,6 +623,23 @@ export async function processChatAgent(
       abortController.abort()
     }, AI_TIMEOUT_MS)
 
+    /** Recupera texto livre do modelo quando ele não chama a tool respond */
+    const adoptPlainTextFallback = (text: string | undefined | null, reason: string) => {
+      const cleaned = (text || '').trim()
+      if (!cleaned) return false
+      console.warn(`[chat-agent] ♻️ Fallback texto livre (${reason}): "${cleaned.slice(0, 120)}..."`)
+      response = {
+        message: convertMarkdownToWhatsApp(cleaned),
+        sentiment: 'neutral',
+        confidence: 0.5,
+        shouldHandoff: false,
+        sources,
+        shouldQuoteUserMessage,
+      }
+      hasResponded = true
+      return true
+    }
+
     try {
       const result = await generateText({
         model,
@@ -619,16 +647,14 @@ export async function processChatAgent(
         messages: aiMessages,
         tools,
         // OpenCode Go / DeepSeek falha com tool_choice=required ("Upstream request failed").
-        // 'auto' ainda chama respond via system prompt + schema das tools.
+        // 'auto' + instrução no system prompt; se não chamar respond, recuperamos abaixo.
         toolChoice: 'auto',
-        // Para quando respond for chamado OU após 3 steps (o que vier primeiro)
-        stopWhen: (event) => stopCondition() || stepCountIs(3)(event),
+        // Permite: busca/reação + respond (antes era 3 e às vezes parava sem respond)
+        stopWhen: (event) => stopCondition() || stepCountIs(5)(event),
         temperature: agent.temperature ?? DEFAULT_TEMPERATURE,
         maxOutputTokens: agent.max_tokens ?? DEFAULT_MAX_TOKENS,
         abortSignal: abortController.signal,
       })
-
-      clearTimeout(timeoutId) // Limpa timeout se completou
 
       console.log(`[chat-agent] ✅ generateText completed in ${Date.now() - startGenerate}ms`)
       console.log(`[chat-agent] Steps executed: ${result.steps?.length || 0}`)
@@ -643,11 +669,9 @@ export async function processChatAgent(
         console.error(`[chat-agent] - response headers: ${JSON.stringify(result.response?.headers || {})}`)
         console.error(`[chat-agent] - warnings: ${JSON.stringify(result.warnings || [])}`)
         console.error(`[chat-agent] - usage: ${JSON.stringify(result.usage || {})}`)
-        // Log raw response se existir
         if (result.response?.body) {
           console.error(`[chat-agent] - raw body available: true`)
         }
-        // Log cada step em detalhe
         result.steps?.forEach((step, i) => {
           console.error(`[chat-agent] - Step ${i + 1} details:`, JSON.stringify({
             finishReason: step.finishReason,
@@ -658,10 +682,49 @@ export async function processChatAgent(
         })
       }
 
-      // Log each step for debugging
       result.steps?.forEach((step, i) => {
         console.log(`[chat-agent] Step ${i + 1}: toolCalls=${step.toolCalls?.map(tc => tc.toolName).join(', ') || 'none'}, text=${step.text?.slice(0, 50) || 'none'}...`)
       })
+
+      // Recuperação 1: modelo respondeu em texto sem chamar respond
+      if (!response) {
+        adoptPlainTextFallback(result.text, 'generateText.text')
+      }
+
+      // Recuperação 2: retry só com tool respond (mensagem curta forçando a tool)
+      if (!response) {
+        console.warn(`[chat-agent] 🔁 Retry: forçando tool respond`)
+        const retry = await generateText({
+          model,
+          system: systemPrompt,
+          messages: [
+            ...aiMessages,
+            {
+              role: 'user' as const,
+              content:
+                'IMPORTANTE: responda a última pergunta do cliente AGORA chamando obrigatoriamente a tool respond com a mensagem final.',
+            },
+          ],
+          tools: { respond: respondTool },
+          toolChoice: 'auto',
+          stopWhen: stepCountIs(2),
+          temperature: agent.temperature ?? DEFAULT_TEMPERATURE,
+          maxOutputTokens: agent.max_tokens ?? DEFAULT_MAX_TOKENS,
+          abortSignal: abortController.signal,
+        })
+
+        console.log(
+          `[chat-agent] Retry finish=${retry.finishReason}, tools=${JSON.stringify(
+            retry.steps?.map((s) => s.toolCalls?.map((tc) => tc.toolName)).flat().filter(Boolean) || []
+          )}`
+        )
+
+        if (!response) {
+          adoptPlainTextFallback(retry.text, 'retry.text')
+        }
+      }
+
+      clearTimeout(timeoutId) // Limpa timeout se completou
 
     } catch (genError) {
       clearTimeout(timeoutId) // Limpa timeout em caso de erro
@@ -678,7 +741,7 @@ export async function processChatAgent(
     }
 
     if (!response) {
-      console.error(`[chat-agent] ⚠️ No response object - respond tool was not called`)
+      console.error(`[chat-agent] ⚠️ No response object - respond tool was not called and no text fallback`)
       throw new Error('No response generated - LLM did not call respond tool')
     }
 

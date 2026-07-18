@@ -226,6 +226,19 @@ function AttendimentoLayoutInner({ children }: { children: ReactNode }) {
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
 
+  // Override root admin manifest so A2HS from /atendimento installs the attendant PWA
+  useEffect(() => {
+    const existing = document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null
+    if (existing) {
+      existing.href = '/manifest-atendimento.json'
+      return
+    }
+    const link = document.createElement('link')
+    link.rel = 'manifest'
+    link.href = '/manifest-atendimento.json'
+    document.head.appendChild(link)
+  }, [])
+
   return (
     <AttendantProvider token={token}>
       <ThemeProvider>

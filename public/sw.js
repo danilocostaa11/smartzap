@@ -4,35 +4,34 @@
  * Estratégias de cache:
  * - Cache-first: assets estáticos (JS, CSS, fontes, imagens)
  * - Network-first: API calls (dados sempre atualizados)
- * - Stale-while-revalidate: páginas HTML
+ * - Network-first com fallback /offline: navegação HTML
  */
 
-const CACHE_VERSION = 'smartzap-v1'
+const CACHE_VERSION = 'smartzap-v2'
 const STATIC_CACHE = `${CACHE_VERSION}-static`
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`
 
-// Assets para pre-cache (shell do app)
+// Shell mínimo (sem HTML autenticado que redireciona para login)
 const PRECACHE_ASSETS = [
-  '/',
-  '/atendimento',
+  '/login',
+  '/offline',
   '/manifest.json',
+  '/manifest-atendimento.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
 ]
 
-// Padrões para cache estático
 const STATIC_PATTERNS = [
-  /\/_next\/static\//,           // Next.js static assets
-  /\.(?:js|css|woff2?|ttf|eot)$/, // Scripts, styles, fonts
-  /\/icons\//,                    // App icons
+  /\/_next\/static\//,
+  /\.(?:js|css|woff2?|ttf|eot)$/,
+  /\/icons\//,
 ]
 
-// Padrões para ignorar (não cachear)
 const IGNORE_PATTERNS = [
-  /\/api\//,                      // API routes
-  /\/_next\/webpack-hmr/,         // HMR (dev only)
-  /chrome-extension/,             // Browser extensions
-  /\.(?:mp3|wav|ogg|m4a|aac)$/,   // Audio files (evita corrupção pelo cache)
+  /\/api\//,
+  /\/_next\/webpack-hmr/,
+  /chrome-extension/,
+  /\.(?:mp3|wav|ogg|m4a|aac)$/,
 ]
 
 // =============================================================================
@@ -92,30 +91,26 @@ self.addEventListener('fetch', (event) => {
   const { request } = event
   const url = new URL(request.url)
 
-  // Ignorar requests que não devem ser cacheados
   if (shouldIgnore(url)) {
     return
   }
 
-  // API requests: Network-first
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(networkFirst(request, DYNAMIC_CACHE))
     return
   }
 
-  // Static assets: Cache-first
   if (isStaticAsset(url)) {
     event.respondWith(cacheFirst(request, STATIC_CACHE))
     return
   }
 
-  // HTML pages: Stale-while-revalidate
+  // Navegação HTML: network-first com fallback /offline
   if (request.mode === 'navigate' || request.headers.get('accept')?.includes('text/html')) {
-    event.respondWith(staleWhileRevalidate(request, DYNAMIC_CACHE))
+    event.respondWith(navigateWithOfflineFallback(request))
     return
   }
 
-  // Default: Network-first
   event.respondWith(networkFirst(request, DYNAMIC_CACHE))
 })
 
@@ -132,7 +127,7 @@ self.addEventListener('push', (event) => {
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     tag: 'smartzap-notification',
-    data: { url: '/atendimento' }
+    data: { url: '/inbox' }
   }
 
   try {
@@ -174,18 +169,37 @@ self.addEventListener('notificationclick', (event) => {
     return
   }
 
-  const url = event.notification.data?.url || '/atendimento'
-
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true })
       .then((clientList) => {
-        // Se já existe uma janela aberta, foca nela
+        const isAttendantContext = clientList.some((client) => {
+          try {
+            return new URL(client.url).pathname.startsWith('/atendimento')
+          } catch {
+            return false
+          }
+        })
+
+        const fallbackUrl = isAttendantContext ? '/atendimento' : '/inbox'
+        const url = event.notification.data?.url || fallbackUrl
+
         for (const client of clientList) {
-          if (client.url.includes('/atendimento') && 'focus' in client) {
-            return client.focus()
+          try {
+            const path = new URL(client.url).pathname
+            const matchesContext = isAttendantContext
+              ? path.startsWith('/atendimento')
+              : !path.startsWith('/atendimento')
+            if (matchesContext && 'focus' in client) {
+              if ('navigate' in client && typeof client.navigate === 'function') {
+                return client.navigate(url).then(() => client.focus())
+              }
+              return client.focus()
+            }
+          } catch {
+            // ignore invalid client urls
           }
         }
-        // Se não, abre uma nova
+
         if (clients.openWindow) {
           return clients.openWindow(url)
         }
@@ -197,10 +211,34 @@ self.addEventListener('notificationclick', (event) => {
 // CACHE STRATEGIES
 // =============================================================================
 
-/**
- * Cache-first: Retorna do cache, fallback para network
- * Ideal para assets estáticos que raramente mudam
- */
+async function navigateWithOfflineFallback(request) {
+  try {
+    const response = await fetch(request)
+    if (response.ok && request.method === 'GET') {
+      // Cache only public shell pages to avoid storing auth redirects
+      const url = new URL(request.url)
+      const cacheable =
+        url.pathname === '/login' ||
+        url.pathname === '/offline' ||
+        url.pathname === '/atendimento' ||
+        url.pathname.startsWith('/atendimento/')
+
+      if (cacheable) {
+        const cache = await caches.open(DYNAMIC_CACHE)
+        cache.put(request, response.clone())
+      }
+    }
+    return response
+  } catch (error) {
+    console.error('[SW] Navigation fetch failed:', error)
+    const offline = await caches.match('/offline')
+    if (offline) return offline
+    const cached = await caches.match(request)
+    if (cached) return cached
+    return new Response('Offline', { status: 503, statusText: 'Offline' })
+  }
+}
+
 async function cacheFirst(request, cacheName) {
   const cached = await caches.match(request)
   if (cached) {
@@ -209,7 +247,6 @@ async function cacheFirst(request, cacheName) {
 
   try {
     const response = await fetch(request)
-    // Só cacheia requisições GET (Cache API não suporta HEAD/POST)
     if (response.ok && request.method === 'GET') {
       const cache = await caches.open(cacheName)
       cache.put(request, response.clone())
@@ -221,15 +258,9 @@ async function cacheFirst(request, cacheName) {
   }
 }
 
-/**
- * Network-first: Tenta network, fallback para cache
- * Ideal para dados que precisam estar atualizados
- * Nota: Cache API só suporta GET, então ignoramos HEAD/POST
- */
 async function networkFirst(request, cacheName) {
   try {
     const response = await fetch(request)
-    // Só cacheia requisições GET (Cache API não suporta HEAD/POST)
     if (response.ok && request.method === 'GET') {
       const cache = await caches.open(cacheName)
       cache.put(request, response.clone())
@@ -245,27 +276,6 @@ async function networkFirst(request, cacheName) {
       headers: { 'Content-Type': 'application/json' }
     })
   }
-}
-
-/**
- * Stale-while-revalidate: Retorna cache imediatamente, atualiza em background
- * Ideal para páginas HTML - rápido mas sempre atualizado
- */
-async function staleWhileRevalidate(request, cacheName) {
-  const cache = await caches.open(cacheName)
-  const cached = await cache.match(request)
-
-  const fetchPromise = fetch(request)
-    .then((response) => {
-      // Só cacheia requisições GET (Cache API não suporta HEAD/POST)
-      if (response.ok && request.method === 'GET') {
-        cache.put(request, response.clone())
-      }
-      return response
-    })
-    .catch(() => null)
-
-  return cached || fetchPromise || new Response('Offline', { status: 503 })
 }
 
 // =============================================================================

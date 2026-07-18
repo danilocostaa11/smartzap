@@ -30,6 +30,7 @@ import { AccountAlertBanner } from '@/components/ui/AccountAlertBanner'
 import { DashboardSidebar, type NavItem } from '@/components/layout/DashboardSidebar'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
 import { DevModeToggle } from '@/components/ui/dev-mode-toggle'
+import { DesktopOnlyGate } from '@/components/pwa/DesktopOnlyGate'
 import { useDevMode } from '@/components/providers/DevModeProvider'
 import {
     OnboardingModal,
@@ -388,7 +389,8 @@ export function DashboardShell({
         ? 'configure-webhook' as const
         : undefined
 
-    const isBuilderRoute = pathname?.startsWith('/builder') ?? false
+    const isBuilderRoute =
+      (pathname?.startsWith('/builder') || pathname?.startsWith('/flows/builder')) ?? false
     const isInboxRoute = pathname?.startsWith('/inbox') ?? false
 
     // Sidebar component props - memoized to prevent DashboardSidebar re-renders
@@ -420,7 +422,7 @@ export function DashboardShell({
         return (
             <PageLayoutProvider>
                 <div
-                    className="min-h-screen bg-[var(--ds-bg-base)] text-[var(--ds-text-primary)] flex font-sans selection:bg-primary-500/30"
+                    className="min-h-dvh bg-[var(--ds-bg-base)] text-[var(--ds-text-primary)] flex font-sans selection:bg-primary-500/30 pt-safe"
                     style={{
                         "--builder-sidebar-width": "56px",
                         "--background": "oklch(0 0 0)",
@@ -429,8 +431,15 @@ export function DashboardShell({
                     } as React.CSSProperties}
                 >
                     <DashboardSidebar {...sidebarProps} />
-                    <div className="flex-1 min-w-0 lg:pl-14">
-                        {children}
+                    <div className="flex-1 min-w-0 lg:pl-14 flex flex-col pb-safe">
+                        <DesktopOnlyGate
+                          title="Editor disponível no desktop"
+                          description="O builder de workflows e flows precisa de uma tela maior. Abra no computador para editar."
+                          backHref="/workflows"
+                          backLabel="Ver workflows"
+                        >
+                          {children}
+                        </DesktopOnlyGate>
                     </div>
                 </div>
             </PageLayoutProvider>
@@ -441,7 +450,7 @@ export function DashboardShell({
     if (isInboxRoute) {
         return (
             <PageLayoutProvider>
-                <div className="min-h-screen bg-[var(--ds-bg-base)] text-[var(--ds-text-primary)] flex font-sans selection:bg-primary-500/30">
+                <div className="min-h-dvh bg-[var(--ds-bg-base)] text-[var(--ds-text-primary)] flex font-sans selection:bg-primary-500/30 pt-safe">
                     {/* Mobile Overlay */}
                     {isMobileMenuOpen && (
                         <div
@@ -463,7 +472,7 @@ export function DashboardShell({
                     {/* Main Content - no header on desktop, compact mobile header */}
                     {/* CompactSidebar is lg:static (in flow), ExpandedSidebar is fixed (needs padding) */}
                     <div className={cn(
-                        "flex-1 flex flex-col min-w-0 h-screen overflow-hidden transition-[padding] duration-200",
+                        "flex-1 flex flex-col min-w-0 h-dvh overflow-hidden transition-[padding] duration-200 pb-safe",
                         isSidebarExpanded && "lg:pl-56"
                     )}>
                         {/* Compact mobile header - only menu button */}
@@ -497,7 +506,7 @@ export function DashboardShell({
 
     return (
         <PageLayoutProvider>
-            <div className="min-h-screen bg-[var(--ds-bg-base)] text-[var(--ds-text-primary)] flex font-sans selection:bg-primary-500/30">
+            <div className="min-h-dvh bg-[var(--ds-bg-base)] text-[var(--ds-text-primary)] flex font-sans selection:bg-primary-500/30 pt-safe">
             {/* Mobile Overlay */}
             {isMobileMenuOpen && (
                 <div
@@ -519,11 +528,11 @@ export function DashboardShell({
 
             {/* Main Content - padding only when expanded (ExpandedSidebar is fixed) */}
             <div className={cn(
-                "flex-1 flex flex-col min-w-0 h-screen overflow-hidden transition-[padding] duration-200",
+                "flex-1 flex flex-col min-w-0 h-dvh overflow-hidden transition-[padding] duration-200 pb-safe",
                 isSidebarExpanded && "lg:pl-56"
             )}>
                 {/* Header */}
-                <header className="h-20 flex items-center justify-between px-6 lg:px-10 shrink-0">
+                <header className="h-14 lg:h-20 flex items-center justify-between px-4 lg:px-10 shrink-0">
                     <div className="flex items-center">
                         <button
                             className="lg:hidden p-2 text-[var(--ds-text-secondary)] mr-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 focus-visible:outline-offset-2 rounded-md"
@@ -640,7 +649,7 @@ function PageContentShell({ children }: { children: React.ReactNode }) {
     const layout = usePageLayout()
 
     const mainOverflowClass = layout.overflow === 'hidden' ? 'overflow-hidden' : 'overflow-auto'
-    const mainPaddingClass = layout.padded ? 'p-6 lg:p-10' : ''
+    const mainPaddingClass = layout.padded ? 'p-4 lg:p-10' : ''
     const wrapperWidthClass = getPageWidthClass(layout.width)
     const wrapperHeightClass = layout.height === 'full' ? 'h-full' : ''
 

@@ -46,13 +46,13 @@ export function useInbox(options: UseInboxOptions = {}) {
     options.initialConversationId || null
   )
 
-  // Sync with URL params
+  // Sync with URL params (inclui clear quando `c` some — ex.: botão voltar do browser)
   useEffect(() => {
     const urlConversationId = searchParams.get('c')
-    if (urlConversationId && urlConversationId !== selectedId) {
+    if (urlConversationId !== selectedId) {
       setSelectedId(urlConversationId)
     }
-  }, [searchParams])
+  }, [searchParams, selectedId])
 
   // Conversations list
   const {

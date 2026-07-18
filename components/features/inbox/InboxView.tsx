@@ -1,13 +1,14 @@
 'use client'
 
 /**
- * InboxView - Seamless Split Layout
+ * InboxView - Seamless Split Layout (desktop) / List-Detail (mobile)
  *
  * Design Philosophy:
  * - No visible borders between panels (seamless feel)
  * - Subtle shadows for depth instead of hard lines
  * - Unified dark background with micro-variations
  * - Invisible resize handle (functional, not visual)
+ * - Mobile (< lg): lista OU detalhe com botão voltar
  */
 
 import React, { useCallback } from 'react'
@@ -21,6 +22,7 @@ import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 import { ConversationList } from './ConversationList'
 import { MessagePanel } from './MessagePanel'
 import { RefreshCw, MessageSquare, Users } from 'lucide-react'
+import { useIsMobile } from '@/hooks/useMediaQuery'
 import type {
   InboxConversation,
   InboxMessage,
@@ -133,7 +135,8 @@ export function InboxView({
   isReturningToBot,
   isDeletingConversation,
 }: InboxViewProps) {
-  // Handle conversation selection
+  const isMobile = useIsMobile()
+
   const handleSelectConversation = useCallback(
     (id: string) => {
       onSelectConversation(id)
@@ -141,7 +144,10 @@ export function InboxView({
     [onSelectConversation]
   )
 
-  // Panel-specific error fallbacks - matching seamless background
+  const handleBack = useCallback(() => {
+    onSelectConversation(null)
+  }, [onSelectConversation])
+
   const ConversationListFallback = (
     <div className="h-full flex flex-col items-center justify-center p-4 text-center bg-[var(--ds-bg-elevated)]">
       <div className="w-10 h-10 mb-3 rounded-full bg-[var(--ds-bg-surface)] flex items-center justify-center">
@@ -149,6 +155,7 @@ export function InboxView({
       </div>
       <p className="text-sm text-[var(--ds-text-secondary)] mb-3">Erro ao carregar</p>
       <button
+        type="button"
         onClick={() => window.location.reload()}
         className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[var(--ds-bg-surface)] text-[var(--ds-text-secondary)] rounded-lg hover:bg-[var(--ds-bg-hover)] transition-colors"
       >
@@ -165,6 +172,7 @@ export function InboxView({
       </div>
       <p className="text-sm text-[var(--ds-text-secondary)] mb-3">Erro ao carregar</p>
       <button
+        type="button"
         onClick={() => window.location.reload()}
         className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-[var(--ds-bg-surface)] text-[var(--ds-text-secondary)] rounded-lg hover:bg-[var(--ds-bg-hover)] transition-colors"
       >
@@ -174,78 +182,88 @@ export function InboxView({
     </div>
   )
 
+  const conversationList = (
+    <ErrorBoundary fallback={ConversationListFallback}>
+      <ConversationList
+        conversations={conversations}
+        selectedId={selectedConversationId}
+        onSelect={handleSelectConversation}
+        isLoading={isLoadingConversations}
+        totalUnread={totalUnread}
+        labels={labels}
+        search={search}
+        onSearchChange={onSearchChange}
+        statusFilter={statusFilter}
+        onStatusFilterChange={onStatusFilterChange}
+        modeFilter={modeFilter}
+        onModeFilterChange={onModeFilterChange}
+        labelFilter={labelFilter}
+        onLabelFilterChange={onLabelFilterChange}
+      />
+    </ErrorBoundary>
+  )
+
+  const messagePanel = (
+    <ErrorBoundary fallback={MessagePanelFallback}>
+      <MessagePanel
+        conversation={selectedConversation}
+        messages={messages}
+        labels={labels}
+        quickReplies={quickReplies}
+        isLoadingConversation={isLoadingSelectedConversation}
+        isLoadingMessages={isLoadingMessages}
+        isLoadingMore={isLoadingMoreMessages}
+        isSending={isSending}
+        quickRepliesLoading={quickRepliesLoading}
+        onRefreshQuickReplies={onRefreshQuickReplies}
+        hasMoreMessages={hasMoreMessages}
+        onLoadMore={onLoadMoreMessages}
+        onSendMessage={onSendMessage}
+        onModeToggle={onModeToggle}
+        onClose={onCloseConversation}
+        onReopen={onReopenConversation}
+        onPriorityChange={onPriorityChange}
+        onLabelToggle={onLabelToggle}
+        onHandoff={onHandoff}
+        onReturnToBot={onReturnToBot}
+        onDelete={onDeleteConversation}
+        onConfigureAgent={onConfigureAgent}
+        onBack={isMobile ? handleBack : undefined}
+        isUpdating={isUpdatingConversation}
+        isHandingOff={isHandingOff}
+        isReturningToBot={isReturningToBot}
+        isDeleting={isDeletingConversation}
+      />
+    </ErrorBoundary>
+  )
+
   return (
     <TooltipProvider delayDuration={300}>
-      {/* Full height container - uses parent height from PageLayoutScope */}
       <div className="h-full bg-[var(--ds-bg-base)]">
-        <ResizablePanelGroup direction="horizontal" className="h-full">
-          {/* Conversation list sidebar - subtle shadow instead of border */}
-          <ResizablePanel
-            defaultSize={28}
-            minSize={22}
-            maxSize={38}
-            className="relative"
-          >
-            {/* Sidebar with subtle right shadow for depth */}
-            <div className="h-full shadow-[1px_0_8px_-2px_rgba(0,0,0,0.3)]">
-              <ErrorBoundary fallback={ConversationListFallback}>
-                <ConversationList
-                  conversations={conversations}
-                  selectedId={selectedConversationId}
-                  onSelect={handleSelectConversation}
-                  isLoading={isLoadingConversations}
-                  totalUnread={totalUnread}
-                  labels={labels}
-                  search={search}
-                  onSearchChange={onSearchChange}
-                  statusFilter={statusFilter}
-                  onStatusFilterChange={onStatusFilterChange}
-                  modeFilter={modeFilter}
-                  onModeFilterChange={onModeFilterChange}
-                  labelFilter={labelFilter}
-                  onLabelFilterChange={onLabelFilterChange}
-                />
-              </ErrorBoundary>
-            </div>
-          </ResizablePanel>
+        {isMobile ? (
+          <div className="h-full">
+            {selectedConversationId ? messagePanel : conversationList}
+          </div>
+        ) : (
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel
+              defaultSize={28}
+              minSize={22}
+              maxSize={38}
+              className="relative"
+            >
+              <div className="h-full shadow-[1px_0_8px_-2px_rgba(0,0,0,0.3)]">
+                {conversationList}
+              </div>
+            </ResizablePanel>
 
-          {/* Invisible resize handle - functional but not visual */}
-          <ResizableHandle className="w-px bg-transparent hover:bg-[var(--ds-border-strong)] transition-colors" />
+            <ResizableHandle className="w-px bg-transparent hover:bg-[var(--ds-border-strong)] transition-colors" />
 
-          {/* Message panel - main content area */}
-          <ResizablePanel defaultSize={72} minSize={50}>
-            <ErrorBoundary fallback={MessagePanelFallback}>
-              <MessagePanel
-                conversation={selectedConversation}
-                messages={messages}
-                labels={labels}
-                quickReplies={quickReplies}
-                isLoadingConversation={isLoadingSelectedConversation}
-                isLoadingMessages={isLoadingMessages}
-                isLoadingMore={isLoadingMoreMessages}
-                isSending={isSending}
-                quickRepliesLoading={quickRepliesLoading}
-                onRefreshQuickReplies={onRefreshQuickReplies}
-                hasMoreMessages={hasMoreMessages}
-                onLoadMore={onLoadMoreMessages}
-                onSendMessage={onSendMessage}
-                onModeToggle={onModeToggle}
-                onClose={onCloseConversation}
-                onReopen={onReopenConversation}
-                onPriorityChange={onPriorityChange}
-                onLabelToggle={onLabelToggle}
-                onHandoff={onHandoff}
-                onReturnToBot={onReturnToBot}
-                onDelete={onDeleteConversation}
-                onConfigureAgent={onConfigureAgent}
-                isUpdating={isUpdatingConversation}
-                isHandingOff={isHandingOff}
-                isReturningToBot={isReturningToBot}
-                isDeleting={isDeletingConversation}
-              />
-            </ErrorBoundary>
-          </ResizablePanel>
-        </ResizablePanelGroup>
+            <ResizablePanel defaultSize={72} minSize={50}>
+              {messagePanel}
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        )}
       </div>
     </TooltipProvider>
   )

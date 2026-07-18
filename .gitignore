@@ -114,3 +114,24 @@ PRD-campaigns-new.md
 # Docs (dev-only, kept locally) - /docs/ ignora apenas na raiz
 /docs/
 .env*.local
+
+# dotcontext runtime state
+.context/plans/
+.context/cache/semantic/
+.context/workflow/
+.context/harness/sessions/
+.context/harness/traces/
+.context/harness/artifacts/
+.context/harness/contracts/
+.context/harness/workflows/
+.context/harness/replays/
+.context/harness/datasets/
+.context/**/archive/
+
+# Session handoffs — local only, never commit
+.context/docs/session-handoff*.md
+
+
+.supabase-new-project.json
+.supabase-new-project.keys.json
+.env.vercel.check

@@ -22,6 +22,11 @@ interface UploadFileParams {
   mime_type?: string
 }
 
+interface ImportUrlParams {
+  agent_id: string
+  url: string
+}
+
 async function listFiles(agentId: string): Promise<AIKnowledgeFile[]> {
   const response = await fetch(`/api/ai-agents/knowledge?agent_id=${agentId}`)
   if (!response.ok) {
@@ -41,6 +46,20 @@ async function uploadFile(params: UploadFileParams): Promise<AIKnowledgeFile> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({}))
     throw new Error(error.error || 'Erro ao enviar arquivo')
+  }
+  const data = await response.json()
+  return data.file
+}
+
+async function importFromUrl(params: ImportUrlParams): Promise<AIKnowledgeFile> {
+  const response = await fetch('/api/ai-agents/knowledge/from-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.error || 'Erro ao importar site')
   }
   const data = await response.json()
   return data.file
@@ -103,6 +122,21 @@ export function useKnowledgeBaseMutations(agentId: string | null) {
     },
   })
 
+  const importUrlMutation = useMutation({
+    mutationFn: importFromUrl,
+    onSuccess: (newFile) => {
+      if (agentId) {
+        queryClient.setQueryData<AIKnowledgeFile[]>(
+          knowledgeBaseKeys.byAgent(agentId),
+          (old) => (old ? [newFile, ...old] : [newFile])
+        )
+      }
+    },
+    onError: (error) => {
+      console.error('[useKnowledgeBase] Import URL error:', error)
+    },
+  })
+
   const deleteMutation = useMutation({
     mutationFn: deleteFile,
     onMutate: async (fileId: string) => {
@@ -149,6 +183,14 @@ export function useKnowledgeBaseMutations(agentId: string | null) {
     [agentId, uploadMutation]
   )
 
+  const onImportUrl = useCallback(
+    async (url: string) => {
+      if (!agentId) throw new Error('Agent ID is required')
+      return importUrlMutation.mutateAsync({ agent_id: agentId, url })
+    },
+    [agentId, importUrlMutation]
+  )
+
   const onDelete = useCallback(
     async (fileId: string) => {
       return deleteMutation.mutateAsync(fileId)
@@ -158,8 +200,10 @@ export function useKnowledgeBaseMutations(agentId: string | null) {
 
   return {
     onUpload,
+    onImportUrl,
     onDelete,
     isUploading: uploadMutation.isPending,
+    isImportingUrl: importUrlMutation.isPending,
     isDeleting: deleteMutation.isPending,
   }
 }
@@ -195,8 +239,10 @@ export function useKnowledgeBaseController(agentId: string | null) {
     refetch,
     // Mutations
     onUpload: mutations.onUpload,
+    onImportUrl: mutations.onImportUrl,
     onDelete: mutations.onDelete,
     isUploading: mutations.isUploading,
+    isImportingUrl: mutations.isImportingUrl,
     isDeleting: mutations.isDeleting,
     // Computed
     totalSize,

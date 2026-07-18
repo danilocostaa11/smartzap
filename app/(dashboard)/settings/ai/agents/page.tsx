@@ -112,8 +112,10 @@ export default function AIAgentsSettingsPage() {
                 isLoading={knowledgeBase.isLoading}
                 error={knowledgeBase.error}
                 onUpload={knowledgeBase.onUpload}
+                onImportUrl={knowledgeBase.onImportUrl}
                 onDelete={knowledgeBase.onDelete}
                 isUploading={knowledgeBase.isUploading}
+                isImportingUrl={knowledgeBase.isImportingUrl}
                 isDeleting={knowledgeBase.isDeleting}
                 totalSize={knowledgeBase.totalSize}
               />

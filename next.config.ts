@@ -37,6 +37,9 @@ const nextConfig: NextConfig = {
   // Standalone output for Docker
   output: 'standalone',
 
+  // jsdom (site crawler knowledge import) must not be bundled into the serverless chunk
+  serverExternalPackages: ['jsdom'],
+
   // Optimize barrel imports for better tree-shaking (experimental in Next.js 16)
   // This automatically transforms imports like `import { X } from 'lucide-react'`
   // to direct module imports, reducing bundle size significantly

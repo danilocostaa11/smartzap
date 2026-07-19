@@ -132,6 +132,7 @@ function extractLinks(doc: Document, baseUrl: URL, seed: URL): string[] {
 function extractPageContent(html: string, pageUrl: string): { title: string; markdown: string } {
   const dom = new JSDOM(html, { url: pageUrl })
   const { document } = dom.window
+  const pageBase = new URL(pageUrl)
 
   for (const el of document.querySelectorAll(
     'script, style, noscript, iframe, svg, canvas, nav, footer, header, aside, form, [role="navigation"], [aria-hidden="true"]'
@@ -150,6 +151,33 @@ function extractPageContent(html: string, pageUrl: string): { title: string; mar
     document.querySelector('[role="main"]') ||
     document.body
 
+  // Preserva links como markdown antes de extrair texto (senão "clique aqui" perde a URL)
+  const usefulLinks: string[] = []
+  if (main) {
+    for (const anchor of Array.from(main.querySelectorAll('a[href]'))) {
+      const href = anchor.getAttribute('href')
+      const label = (anchor.textContent || '').replace(/\s+/g, ' ').trim()
+      if (!href || !label || label.length < 2) continue
+      if (href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) {
+        continue
+      }
+
+      let absolute: URL
+      try {
+        absolute = new URL(href, pageBase)
+      } catch {
+        continue
+      }
+      if (absolute.protocol !== 'http:' && absolute.protocol !== 'https:') continue
+      if (isSkippablePath(absolute.pathname)) continue
+
+      const url = canonicalizeUrl(absolute)
+      const md = `[${label}](${url})`
+      usefulLinks.push(`- ${md}`)
+      anchor.replaceWith(document.createTextNode(` ${md} `))
+    }
+  }
+
   const text = (main?.textContent || '')
     .replace(/\u00a0/g, ' ')
     .replace(/[ \t]+\n/g, '\n')
@@ -157,9 +185,13 @@ function extractPageContent(html: string, pageUrl: string): { title: string; mar
     .replace(/[ \t]{2,}/g, ' ')
     .trim()
 
+  const uniqueLinks = [...new Set(usefulLinks)].slice(0, 40)
+  const linksBlock =
+    uniqueLinks.length > 0 ? `\n\n### Links desta página\n${uniqueLinks.join('\n')}` : ''
+
   const clipped = text.length > MAX_PAGE_CHARS ? `${text.slice(0, MAX_PAGE_CHARS)}\n\n[...conteúdo truncado]` : text
 
-  const markdown = `# ${title}\n\nSource: ${pageUrl}\n\n${clipped || '_Página sem texto extraível._'}`
+  const markdown = `# ${title}\n\nSource: ${pageUrl}\n\n${clipped || '_Página sem texto extraível._'}${linksBlock}`
 
   return { title, markdown }
 }

@@ -279,6 +279,48 @@ export function buildEmbeddingConfigFromAgent(
   }
 }
 
+const EMBEDDING_API_KEY_MAP: Record<
+  EmbeddingConfig['provider'],
+  { settingKey: string; envVar: string; label: string }
+> = {
+  google: { settingKey: 'gemini_api_key', envVar: 'GEMINI_API_KEY', label: 'Google Gemini' },
+  openai: { settingKey: 'openai_api_key', envVar: 'OPENAI_API_KEY', label: 'OpenAI' },
+  voyage: { settingKey: 'voyage_api_key', envVar: 'VOYAGE_API_KEY', label: 'Voyage AI' },
+  cohere: { settingKey: 'cohere_api_key', envVar: 'COHERE_API_KEY', label: 'Cohere' },
+}
+
+/**
+ * Resolve a API key correta do provider de EMBEDDING do agente.
+ * Não usar a chave do LLM de chat (ex.: OpenCode) — são providers diferentes.
+ */
+export async function resolveEmbeddingApiKeyForAgent(
+  agent: AIAgent
+): Promise<{ apiKey: string | null; providerLabel: string; provider: EmbeddingConfig['provider'] }> {
+  const provider = (agent.embedding_provider || 'google') as EmbeddingConfig['provider']
+  const config = EMBEDDING_API_KEY_MAP[provider] || EMBEDDING_API_KEY_MAP.google
+
+  const supabase = getSupabaseAdmin()
+  if (!supabase) {
+    return {
+      apiKey: process.env[config.envVar] || null,
+      providerLabel: config.label,
+      provider,
+    }
+  }
+
+  const { data: setting } = await supabase
+    .from('settings')
+    .select('value')
+    .eq('key', config.settingKey)
+    .maybeSingle()
+
+  return {
+    apiKey: setting?.value || process.env[config.envVar] || null,
+    providerLabel: config.label,
+    provider,
+  }
+}
+
 /**
  * Constrói RerankConfig a partir de um AIAgent (se habilitado)
  */

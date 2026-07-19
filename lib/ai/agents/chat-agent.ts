@@ -313,6 +313,7 @@ export async function processChatAgent(
     hasIndexedContent,
     buildEmbeddingConfigFromAgent,
     buildRerankConfigFromAgent,
+    resolveEmbeddingApiKeyForAgent,
   } = await import('@/lib/ai/rag-store')
 
   // Setup message context
@@ -418,6 +419,18 @@ export async function processChatAgent(
 - Se usar outras tools (busca, reação, etc.), chame \`respond\` em seguida com a resposta final.
 - Se não souber algo, ainda assim chame \`respond\` com uma resposta honesta e útil.`
 
+    if (hasKnowledgeBase) {
+      systemPrompt += `\n\n## Base de conhecimento (RAG) — OBRIGATÓRIO
+Você TEM acesso à base oficial da Engelux via tool \`searchKnowledgeBase\`.
+- Quando o cliente pedir opções, empreendimentos, bairros, links, disponibilidade ou "o que tem na Lapa/região X":
+  1) chame \`searchKnowledgeBase\` ANTES de responder;
+  2) use os trechos encontrados (incluindo URLs) na resposta;
+  3) NÃO diga que "não tem acesso" se a busca retornar conteúdo.
+- Pode citar nomes e links oficiais encontrados na base.
+- Se a busca não achar nada útil, diga isso com honestidade e ofereça conectar ao especialista.
+- Continua válido: não invente preços, parcelas ou condições específicas.`
+    }
+
     const responseSchema = getResponseSchema(handoffEnabled)
 
     console.log(`[chat-agent] Handoff enabled: ${handoffEnabled}`)
@@ -451,8 +464,17 @@ export async function processChatAgent(
     let searchKnowledgeBaseTool: any = undefined
 
     if (hasKnowledgeBase) {
-      searchKnowledgeBaseTool = tool({
-        description: 'Busca informações na base de conhecimento do agente. Use para responder perguntas que precisam de dados específicos.',
+      const embeddingKeyResult = await resolveEmbeddingApiKeyForAgent(agent)
+      if (!embeddingKeyResult.apiKey) {
+        console.error(
+          `[chat-agent] Knowledge base exists but ${embeddingKeyResult.providerLabel} API key is missing — RAG tool disabled`
+        )
+      }
+
+      searchKnowledgeBaseTool = embeddingKeyResult.apiKey
+        ? tool({
+        description:
+          'OBRIGATÓRIA para perguntas sobre empreendimentos, regiões (ex.: Lapa), opções disponíveis, links de projetos, status de obra ou detalhes oficiais da Engelux. Busca na base de conhecimento indexada (site/documentos). Chame ANTES de dizer que não tem acesso.',
         inputSchema: z.object({
           query: z.string().describe('A pergunta ou termos de busca para encontrar informações relevantes'),
         }),
@@ -460,8 +482,8 @@ export async function processChatAgent(
           console.log(`[chat-agent] LLM requested knowledge search: "${query.slice(0, 100)}..."`)
           const ragStartTime = Date.now()
 
-          // Build configs
-          const embeddingConfig = buildEmbeddingConfigFromAgent(agent, apiKey)
+          // Build configs — chave do provider de EMBEDDING, não do LLM de chat
+          const embeddingConfig = buildEmbeddingConfigFromAgent(agent, embeddingKeyResult.apiKey!)
           const rerankConfig = await buildRerankConfigFromAgent(agent)
 
           // Search
@@ -471,7 +493,8 @@ export async function processChatAgent(
             embeddingConfig,
             rerankConfig,
             topK: agent.rag_max_results || 5,
-            threshold: agent.rag_similarity_threshold || 0.5,
+            // Floor 0.40: threshold alto (0.55+) às vezes esconde hits úteis em sites ruidosos
+            threshold: Math.min(agent.rag_similarity_threshold || 0.5, 0.45),
           })
 
           console.log(`[chat-agent] RAG search completed in ${Date.now() - ragStartTime}ms, found ${relevantContent.length} chunks`)
@@ -498,6 +521,7 @@ export async function processChatAgent(
           }
         },
       })
+        : undefined
     }
 
     // Build tools object

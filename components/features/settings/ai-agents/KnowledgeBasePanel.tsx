@@ -17,6 +17,7 @@ import {
   XCircle,
   HardDrive,
   Globe,
+  RefreshCw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -51,11 +52,21 @@ export interface KnowledgeBasePanelProps {
   error: Error | null
   onUpload: (params: { name: string; content: string; mime_type?: string }) => Promise<AIKnowledgeFile>
   onImportUrl?: (url: string) => Promise<AIKnowledgeFile>
+  onReindex?: (fileId: string) => Promise<AIKnowledgeFile>
   onDelete: (fileId: string) => Promise<void>
   isUploading?: boolean
   isImportingUrl?: boolean
+  isReindexing?: boolean
   isDeleting?: boolean
   totalSize?: number
+}
+
+function getIndexError(file: AIKnowledgeFile): string | null {
+  const uri = file.external_file_uri
+  if (uri?.startsWith('index_error:')) {
+    return uri.slice('index_error:'.length)
+  }
+  return null
 }
 
 const statusConfig: Record<KnowledgeFileIndexingStatus, { label: string; icon: React.ElementType; color: string }> = {
@@ -79,20 +90,23 @@ export function KnowledgeBasePanel({
   error,
   onUpload,
   onImportUrl,
+  onReindex,
   onDelete,
   isUploading = false,
   isImportingUrl = false,
+  isReindexing = false,
   isDeleting = false,
   totalSize = 0,
 }: KnowledgeBasePanelProps) {
   const [isDragOver, setIsDragOver] = useState(false)
   const [deleteFile, setDeleteFile] = useState<AIKnowledgeFile | null>(null)
+  const [reindexingId, setReindexingId] = useState<string | null>(null)
   const [siteDialogOpen, setSiteDialogOpen] = useState(false)
   const [siteUrl, setSiteUrl] = useState('')
   const [siteError, setSiteError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const busy = isUploading || isImportingUrl
+  const busy = isUploading || isImportingUrl || isReindexing
 
   // Handle file selection
   const handleFileSelect = useCallback(
@@ -194,6 +208,22 @@ export function KnowledgeBasePanel({
       setSiteError(err instanceof Error ? err.message : 'Erro ao importar site')
     }
   }, [onImportUrl, siteUrl])
+
+  const handleReindex = useCallback(
+    async (fileId: string) => {
+      if (!onReindex) return
+      setReindexingId(fileId)
+      try {
+        await onReindex(fileId)
+      } catch (err) {
+        console.error('[KnowledgeBasePanel] Reindex error:', err)
+        alert(err instanceof Error ? err.message : 'Erro ao reindexar')
+      } finally {
+        setReindexingId(null)
+      }
+    },
+    [onReindex]
+  )
 
   if (!agentId) {
     return (
@@ -322,11 +352,13 @@ export function KnowledgeBasePanel({
                 const status = statusConfig[file.indexing_status]
                 const StatusIcon = status.icon
                 const isSite = file.name.startsWith('site:')
+                const indexError = getIndexError(file)
+                const fileReindexing = reindexingId === file.id
 
                 return (
                   <div
                     key={file.id}
-                    className="flex items-center justify-between p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50"
+                    className="flex items-center justify-between gap-3 p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50"
                   >
                     <div className="flex items-center gap-3 min-w-0 flex-1">
                       <div className="p-2 rounded bg-zinc-700/50">
@@ -344,18 +376,24 @@ export function KnowledgeBasePanel({
                           {formatFileSize(file.size_bytes)}
                           {file.chunks_count > 0 ? ` · ${file.chunks_count} chunks` : ''}
                         </p>
+                        {indexError && file.indexing_status === 'failed' && (
+                          <p className="text-xs text-red-400 mt-1 line-clamp-2" title={indexError}>
+                            {indexError}
+                          </p>
+                        )}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 shrink-0">
                       {/* Status badge */}
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <div className={cn('flex items-center gap-1', status.color)}>
+                          <div className={cn('flex items-center gap-1 px-1', status.color)}>
                             <StatusIcon
                               className={cn(
                                 'h-4 w-4',
-                                file.indexing_status === 'processing' && 'animate-spin'
+                                (file.indexing_status === 'processing' || fileReindexing) &&
+                                  'animate-spin'
                               )}
                             />
                           </div>
@@ -365,13 +403,38 @@ export function KnowledgeBasePanel({
                         </TooltipContent>
                       </Tooltip>
 
+                      {onReindex &&
+                        (file.indexing_status === 'failed' ||
+                          file.indexing_status === 'completed') && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-zinc-400 hover:text-emerald-400"
+                                onClick={() => void handleReindex(file.id)}
+                                disabled={busy}
+                              >
+                                {fileReindexing ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Reindexar</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+
                       {/* Delete button */}
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-zinc-400 hover:text-red-400"
                         onClick={() => setDeleteFile(file)}
-                        disabled={isDeleting}
+                        disabled={isDeleting || busy}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>

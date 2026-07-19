@@ -103,7 +103,14 @@ async function getEmbeddingModel(config: EmbeddingConfig) {
   // Verifica se AI Gateway está habilitado
   const gatewayConfig = await getAiGatewayConfig()
 
-  if (gatewayConfig.enabled && (config.provider === 'google' || config.provider === 'openai')) {
+  // Gateway exige AI_GATEWAY_API_KEY própria. Com apiKey vazia, BYOK sozinho
+  // ainda falha ("Authentication failed"). Preferir conexão direta nesse caso.
+  const canUseGateway =
+    gatewayConfig.enabled &&
+    !!gatewayConfig.apiKey &&
+    (config.provider === 'google' || config.provider === 'openai')
+
+  if (canUseGateway) {
     // Usa AI Gateway para embedding
     const { createOpenAI } = await import('@ai-sdk/openai')
 

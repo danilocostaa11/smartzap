@@ -199,6 +199,7 @@ export async function POST(request: NextRequest) {
     // Index file in pgvector (async but we wait for it)
     let indexingStatus: 'completed' | 'failed' = 'failed'
     let chunksCount = 0
+    let indexErrorMessage: string | null = null
 
     try {
       // Process with OCR if needed (PDFs, images, Office docs → Markdown)
@@ -235,9 +236,12 @@ export async function POST(request: NextRequest) {
         chunksCount = result.chunksIndexed
         console.log(`[knowledge] Indexed ${chunksCount} chunks for ${name}`)
       } else {
-        console.error(`[knowledge] Indexing failed: ${result.error}`)
+        indexErrorMessage = result.error || 'Falha ao indexar'
+        console.error(`[knowledge] Indexing failed: ${indexErrorMessage}`)
       }
     } catch (indexError) {
+      indexErrorMessage =
+        indexError instanceof Error ? indexError.message : 'Erro ao indexar'
       console.error('[knowledge] Indexing error:', indexError)
       // Continue - file is saved, just not indexed
     }
@@ -248,6 +252,9 @@ export async function POST(request: NextRequest) {
       .update({
         indexing_status: indexingStatus,
         chunks_count: chunksCount,
+        external_file_uri: indexErrorMessage
+          ? `index_error:${indexErrorMessage.slice(0, 480)}`
+          : null,
       })
       .eq('id', file.id)
 

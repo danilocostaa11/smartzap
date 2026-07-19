@@ -152,6 +152,7 @@ export async function POST(request: NextRequest) {
 
     let indexingStatus: 'completed' | 'failed' = 'failed'
     let chunksCount = 0
+    let indexErrorMessage: string | null = null
 
     try {
       const embeddingConfig = buildEmbeddingConfigFromAgent(agent as AIAgent, apiKey)
@@ -175,9 +176,12 @@ export async function POST(request: NextRequest) {
           `[knowledge/from-url] Indexed ${chunksCount} chunks from ${crawl.pages.length} pages`
         )
       } else {
-        console.error(`[knowledge/from-url] Indexing failed: ${result.error}`)
+        indexErrorMessage = result.error || 'Falha ao indexar'
+        console.error(`[knowledge/from-url] Indexing failed: ${indexErrorMessage}`)
       }
     } catch (indexError) {
+      indexErrorMessage =
+        indexError instanceof Error ? indexError.message : 'Erro ao indexar'
       console.error('[knowledge/from-url] Indexing error:', indexError)
     }
 
@@ -186,6 +190,9 @@ export async function POST(request: NextRequest) {
       .update({
         indexing_status: indexingStatus,
         chunks_count: chunksCount,
+        external_file_uri: indexErrorMessage
+          ? `index_error:${indexErrorMessage.slice(0, 480)}`
+          : null,
       })
       .eq('id', file.id)
 

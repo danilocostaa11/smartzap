@@ -65,6 +65,20 @@ async function importFromUrl(params: ImportUrlParams): Promise<AIKnowledgeFile> 
   return data.file
 }
 
+async function reindexFile(fileId: string): Promise<AIKnowledgeFile> {
+  const response = await fetch('/api/ai-agents/knowledge/reindex', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_id: fileId }),
+  })
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.error || 'Erro ao reindexar arquivo')
+  }
+  const data = await response.json()
+  return data.file
+}
+
 async function deleteFile(fileId: string): Promise<void> {
   const response = await fetch(`/api/ai-agents/knowledge?id=${fileId}`, {
     method: 'DELETE',
@@ -137,6 +151,24 @@ export function useKnowledgeBaseMutations(agentId: string | null) {
     },
   })
 
+  const reindexMutation = useMutation({
+    mutationFn: reindexFile,
+    onSuccess: (updatedFile) => {
+      if (agentId) {
+        queryClient.setQueryData<AIKnowledgeFile[]>(
+          knowledgeBaseKeys.byAgent(agentId),
+          (old) =>
+            old
+              ? old.map((f) => (f.id === updatedFile.id ? updatedFile : f))
+              : [updatedFile]
+        )
+      }
+    },
+    onError: (error) => {
+      console.error('[useKnowledgeBase] Reindex error:', error)
+    },
+  })
+
   const deleteMutation = useMutation({
     mutationFn: deleteFile,
     onMutate: async (fileId: string) => {
@@ -191,6 +223,13 @@ export function useKnowledgeBaseMutations(agentId: string | null) {
     [agentId, importUrlMutation]
   )
 
+  const onReindex = useCallback(
+    async (fileId: string) => {
+      return reindexMutation.mutateAsync(fileId)
+    },
+    [reindexMutation]
+  )
+
   const onDelete = useCallback(
     async (fileId: string) => {
       return deleteMutation.mutateAsync(fileId)
@@ -201,9 +240,11 @@ export function useKnowledgeBaseMutations(agentId: string | null) {
   return {
     onUpload,
     onImportUrl,
+    onReindex,
     onDelete,
     isUploading: uploadMutation.isPending,
     isImportingUrl: importUrlMutation.isPending,
+    isReindexing: reindexMutation.isPending,
     isDeleting: deleteMutation.isPending,
   }
 }
@@ -240,9 +281,11 @@ export function useKnowledgeBaseController(agentId: string | null) {
     // Mutations
     onUpload: mutations.onUpload,
     onImportUrl: mutations.onImportUrl,
+    onReindex: mutations.onReindex,
     onDelete: mutations.onDelete,
     isUploading: mutations.isUploading,
     isImportingUrl: mutations.isImportingUrl,
+    isReindexing: mutations.isReindexing,
     isDeleting: mutations.isDeleting,
     // Computed
     totalSize,

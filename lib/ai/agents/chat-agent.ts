@@ -23,6 +23,27 @@ import type { AIAgent, InboxConversation, InboxMessage } from '@/types'
 // This is required because static imports can cause issues when called from
 // background contexts (like debounced webhook handlers)
 
+/**
+ * Detecta mensagens que provavelmente precisam da base de conhecimento.
+ * Usado para pré-buscar RAG quando o LLM (toolChoice=auto) tende a pular a tool.
+ */
+function shouldPrefetchKnowledge(text: string): boolean {
+  const q = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+
+  // Saudações / respostas curtas de fluxo → sem prefetch
+  if (q.trim().length < 12) return false
+  if (/^(oi|oie|ola|ok|sim|nao|obrigad|blz|valeu|tudo bem)\b/.test(q.trim())) return false
+
+  return (
+    /\b(minha casa|mcmv|hmp|fgts|subsidio|faixa|renda|regra|criterio|elegib|documenta|financi|como funciona|como e|empreendimento|opcao|opcoes|link|bairro|regiao|lapa|disponib|obra|lancamento|pronta? para morar)\b/.test(
+      q
+    ) || /\b(o que (tem|voce tem)|me passa|me fala|explica|funciona)\b/.test(q)
+  )
+}
+
 // =============================================================================
 // Debounce Manager
 // =============================================================================
@@ -421,14 +442,53 @@ export async function processChatAgent(
 
     if (hasKnowledgeBase) {
       systemPrompt += `\n\n## Base de conhecimento (RAG) — OBRIGATÓRIO
-Você TEM acesso à base oficial da Engelux via tool \`searchKnowledgeBase\`.
-- Quando o cliente pedir opções, empreendimentos, bairros, links, disponibilidade ou "o que tem na Lapa/região X":
-  1) chame \`searchKnowledgeBase\` ANTES de responder;
-  2) use os trechos encontrados (incluindo URLs) na resposta;
-  3) NÃO diga que "não tem acesso" se a busca retornar conteúdo.
-- Pode citar nomes e links oficiais encontrados na base.
-- Se a busca não achar nada útil, diga isso com honestidade e ofereça conectar ao especialista.
-- Continua válido: não invente preços, parcelas ou condições específicas.`
+Você TEM acesso à base oficial (site + documentos .md) via tool \`searchKnowledgeBase\`.
+- Chame \`searchKnowledgeBase\` ANTES de responder quando o cliente perguntar sobre:
+  opções/empreendimentos/bairros/links; Minha Casa Minha Vida / MCMV / HMP; FGTS; faixas de renda;
+  regras, critérios, "como funciona", subsídio, entrada, documentação ou qualquer fato que possa estar nos arquivos da base.
+- Fluxo permitido e esperado: \`searchKnowledgeBase\` → depois \`respond\` (isso conta como UMA resposta; não pule a busca para "fazer só uma pergunta").
+- Use os trechos encontrados (incluindo URLs e regras gerais) na resposta, em linguagem de WhatsApp (curta).
+- Pode explicar regras GERAIS do programa encontradas na base. NÃO invente simulação pessoal (parcela/taxa do cliente).
+- NÃO diga que "não tem acesso" ou só "o especialista explica" se a busca retornou conteúdo útil.
+- Se a busca não achar nada útil, aí sim diga com honestidade e ofereça conectar ao especialista.`
+
+      // Pré-busca: modelos com toolChoice=auto (ex.: DeepSeek) às vezes ignoram a tool.
+      // Se a mensagem parece factual, injeta trechos já buscados para o LLM usar.
+      if (shouldPrefetchKnowledge(inputText)) {
+        try {
+          const embeddingKeyResult = await resolveEmbeddingApiKeyForAgent(agent)
+          if (embeddingKeyResult.apiKey) {
+            const embeddingConfig = buildEmbeddingConfigFromAgent(agent, embeddingKeyResult.apiKey)
+            const rerankConfig = await buildRerankConfigFromAgent(agent)
+            const prefetchHits = await findRelevantContent({
+              agentId: agent.id,
+              query: inputText,
+              embeddingConfig,
+              rerankConfig,
+              topK: agent.rag_max_results || 5,
+              threshold: Math.min(agent.rag_similarity_threshold || 0.5, 0.45),
+            })
+            if (prefetchHits.length > 0) {
+              sources = prefetchHits.map((r, i) => ({
+                title: `Fonte ${i + 1}`,
+                content: r.content.slice(0, 200) + '...',
+              }))
+              const prefetchText = prefetchHits.map((r, i) => `[${i + 1}] ${r.content}`).join('\n\n')
+              systemPrompt += `\n\n## Trechos da base (já buscados para esta mensagem)
+Use estes trechos na resposta. Se precisar refinar, ainda pode chamar \`searchKnowledgeBase\`.
+
+${prefetchText}`
+              console.log(
+                `[chat-agent] Prefetch RAG: ${prefetchHits.length} chunks for "${inputText.slice(0, 80)}..."`
+              )
+            } else {
+              console.log(`[chat-agent] Prefetch RAG: 0 chunks for "${inputText.slice(0, 80)}..."`)
+            }
+          }
+        } catch (prefetchError) {
+          console.error('[chat-agent] Prefetch RAG failed:', prefetchError)
+        }
+      }
     }
 
     const responseSchema = getResponseSchema(handoffEnabled)
@@ -474,7 +534,7 @@ Você TEM acesso à base oficial da Engelux via tool \`searchKnowledgeBase\`.
       searchKnowledgeBaseTool = embeddingKeyResult.apiKey
         ? tool({
         description:
-          'OBRIGATÓRIA para perguntas sobre empreendimentos, regiões (ex.: Lapa), opções disponíveis, links de projetos, status de obra ou detalhes oficiais da Engelux. Busca na base de conhecimento indexada (site/documentos). Chame ANTES de dizer que não tem acesso.',
+          'OBRIGATÓRIA para perguntas factuais: empreendimentos, regiões, links, Minha Casa Minha Vida/MCMV/HMP, FGTS, faixas de renda, regras, "como funciona", critérios de elegibilidade ou qualquer conteúdo dos documentos/site indexados. Busca na base (site + .md). Chame ANTES de responder ou de dizer que não tem acesso.',
         inputSchema: z.object({
           query: z.string().describe('A pergunta ou termos de busca para encontrar informações relevantes'),
         }),

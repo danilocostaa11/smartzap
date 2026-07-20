@@ -36,6 +36,9 @@ export function ContactsClientWrapper({ initialData }: ContactsClientWrapperProp
       totalPages={controller.totalPages}
       totalFiltered={controller.totalFiltered}
       onPageChange={controller.setCurrentPage}
+      pageSize={controller.pageSize}
+      pageSizeOptions={controller.pageSizeOptions}
+      onPageSizeChange={controller.setPageSize}
       selectedIds={controller.selectedIds}
       onToggleSelect={controller.toggleSelect}
       onToggleSelectAll={controller.toggleSelectAll}

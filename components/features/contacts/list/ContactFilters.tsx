@@ -128,28 +128,49 @@ export interface ContactResultsInfoProps {
   totalFiltered: number;
   hasActiveFilters: boolean;
   onClearFilters: () => void;
+  pageSize: number;
+  pageSizeOptions: readonly number[];
+  onPageSizeChange: (size: number) => void;
 }
 
 export const ContactResultsInfo: React.FC<ContactResultsInfoProps> = ({
   displayedCount,
   totalFiltered,
   hasActiveFilters,
-  onClearFilters
+  onClearFilters,
+  pageSize,
+  pageSizeOptions,
+  onPageSizeChange,
 }) => {
   return (
-    <div className="px-5 py-3 bg-[var(--ds-bg-hover)] border-b border-[var(--ds-border-subtle)] flex items-center justify-between text-sm">
+    <div className="px-5 py-3 bg-[var(--ds-bg-hover)] border-b border-[var(--ds-border-subtle)] flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-sm">
       <span className="text-[var(--ds-text-muted)]" aria-live="polite">
         Mostrando <span className="text-[var(--ds-text-primary)] font-medium">{displayedCount}</span> de{' '}
         <span className="text-[var(--ds-text-primary)] font-medium">{totalFiltered}</span> contatos
       </span>
-      {hasActiveFilters && (
-        <button
-          onClick={onClearFilters}
-          className="text-primary-400 hover:text-primary-300 text-xs font-medium"
-        >
-          Limpar filtros
-        </button>
-      )}
+      <div className="flex items-center gap-3 flex-wrap">
+        <label className="flex items-center gap-2 text-[var(--ds-text-muted)]">
+          <span className="whitespace-nowrap">Por página</span>
+          <select
+            value={pageSize}
+            onChange={(e) => onPageSizeChange(Number(e.target.value))}
+            className="px-3 py-1.5 text-sm font-medium bg-[var(--ds-bg-elevated)] text-[var(--ds-text-primary)] rounded-lg border border-[var(--ds-border-default)] outline-none cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 focus-visible:outline-offset-2"
+            aria-label="Quantidade de contatos por página"
+          >
+            {pageSizeOptions.map((size) => (
+              <option key={size} value={size}>{size}</option>
+            ))}
+          </select>
+        </label>
+        {hasActiveFilters && (
+          <button
+            onClick={onClearFilters}
+            className="text-primary-400 hover:text-primary-300 text-xs font-medium"
+          >
+            Limpar filtros
+          </button>
+        )}
+      </div>
     </div>
   );
 };

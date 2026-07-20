@@ -10,8 +10,10 @@
 export const PAGINATION = {
   /** Items per page for campaigns list */
   campaigns: 20,
-  /** Items per page for contacts list */
-  contacts: 10,
+  /** Default items per page for contacts list */
+  contacts: 50,
+  /** Selectable page sizes for contacts list (API max is 100) */
+  contactPageSizes: [10, 25, 50, 100] as const,
   /** Items per page for messages in campaign details */
   messages: 100,
   /** Items per page for templates list */
@@ -21,6 +23,8 @@ export const PAGINATION = {
   /** Items per page for lead forms submissions */
   leadForms: 20,
 } as const
+
+export type ContactPageSize = (typeof PAGINATION.contactPageSizes)[number]
 
 // ============================================================================
 // POLLING INTERVALS

@@ -65,3 +65,12 @@ export {
   filterContacts,
   type ContactFilterCriteria,
 } from './filtering'
+
+// Tags (jsonb helpers)
+export {
+  normalizeTagName,
+  mergeTags,
+  removeTags,
+  renameTagInList,
+  tagsEqualIgnoreOrder,
+} from './tags'

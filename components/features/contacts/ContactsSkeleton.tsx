@@ -10,7 +10,7 @@ export function ContactsSkeleton() {
       <PageHeader>
         <div>
           <PageTitle>Contatos</PageTitle>
-          <PageDescription>Gerencie sua audiência e listas</PageDescription>
+          <PageDescription>Gerencie sua audiência, listas e tags</PageDescription>
         </div>
         <PageActions className="flex-wrap justify-start sm:justify-end">
           <div className="flex items-center gap-2">

@@ -85,6 +85,53 @@ export const BulkSetContactCustomFieldSchema = z.object({
   value: z.string().min(1, 'Valor é obrigatório').max(500, 'Valor muito longo'),
 })
 
+// Bulk: adiciona ou remove uma tag em vários contatos.
+export const BulkContactTagsSchema = z.object({
+  contactIds: z
+    .array(z.string().min(1, 'ID inválido'))
+    .min(1, 'Selecione pelo menos um contato')
+    .max(5000, 'Máximo de 5.000 contatos por operação'),
+  tag: z.string().min(1, 'Tag é obrigatória').max(50, 'Tag muito longa'),
+  action: z.enum(['add', 'remove']),
+})
+
+export const CreateContactTagSchema = z.object({
+  tag: z.string().min(1, 'Tag é obrigatória').max(50, 'Tag muito longa'),
+  contactIds: z
+    .array(z.string().min(1))
+    .max(5000)
+    .optional()
+    .default([]),
+})
+
+export const RenameContactTagSchema = z.object({
+  from: z.string().min(1, 'Tag atual é obrigatória').max(50),
+  to: z.string().min(1, 'Novo nome é obrigatório').max(50),
+})
+
+export const DeleteContactTagSchema = z.object({
+  tag: z.string().min(1, 'Tag é obrigatória').max(50),
+})
+
+export const CreateContactListSchema = z.object({
+  name: z.string().min(1, 'Nome é obrigatório').max(50, 'Nome muito longo'),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().default('#6B7280'),
+  description: z.string().max(200).optional().nullable(),
+})
+
+export const UpdateContactListSchema = z.object({
+  name: z.string().min(1).max(50).optional(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+  description: z.string().max(200).optional().nullable(),
+})
+
+export const ContactListMembersSchema = z.object({
+  contactIds: z
+    .array(z.string().min(1, 'ID inválido'))
+    .min(1, 'Selecione pelo menos um contato')
+    .max(5000, 'Máximo de 5.000 contatos por operação'),
+})
+
 // ============================================================================
 // Campaign Schemas
 // ============================================================================

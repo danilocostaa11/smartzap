@@ -16,6 +16,7 @@ export interface ContactSelectionFilters {
   search: string;
   status: ContactStatus | 'ALL' | 'SUPPRESSED';
   tag: string;
+  listId?: string;
 }
 
 /**
@@ -52,6 +53,7 @@ export function useContactSelection(
         search: filters.search.trim(),
         status: filters.status,
         tag: filters.tag,
+        listId: filters.listId,
       })
       .then((ids) => {
         setSelectedIds(selectAllContactsGlobal(ids));
@@ -59,7 +61,7 @@ export function useContactSelection(
       .catch((error: any) => {
         toast.error(error.message || 'Erro ao selecionar todos os contatos');
       });
-  }, [filters.search, filters.status, filters.tag]);
+  }, [filters.search, filters.status, filters.tag, filters.listId]);
 
   // Clear all selections
   const clearSelection = useCallback(() => {

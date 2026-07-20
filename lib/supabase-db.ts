@@ -28,7 +28,16 @@ import {
     CreateCampaignFolderDTO,
     UpdateCampaignFolderDTO,
     CreateCampaignTagDTO,
+    ContactList,
+    CreateContactListDTO,
+    UpdateContactListDTO,
 } from '../types'
+import {
+    mergeTags,
+    removeTags,
+    renameTagInList,
+    normalizeTagName,
+} from '@/lib/business/contact/tags'
 import { isSuppressionActive } from '@/lib/phone-suppressions'
 import { canonicalTemplateCategory } from '@/lib/template-category'
 
@@ -525,12 +534,14 @@ export const contactDb = {
         search?: string | null
         status?: string | null
         tag?: string | null
+        listId?: string | null
     }): Promise<{ data: Contact[]; total: number }> => {
         const limit = Math.max(1, Math.min(100, Math.floor(params.limit || 10)))
         const offset = Math.max(0, Math.floor(params.offset || 0))
         const search = (params.search || '').trim()
         const status = (params.status || '').trim()
         const tag = (params.tag || '').trim()
+        const listId = (params.listId || '').trim()
 
         const buildContactSearchOr = (raw: string) => {
             const term = String(raw || '').trim()
@@ -556,6 +567,25 @@ export const contactDb = {
         let query = supabase
             .from('contacts')
             .select('*', { count: 'exact' })
+
+        if (listId && listId !== 'ALL') {
+            const { data: memberRows, error: membersError } = await supabase
+                .from('contact_list_members')
+                .select('contact_id')
+                .eq('list_id', listId)
+
+            if (membersError) throw membersError
+
+            const memberIds = (memberRows || [])
+                .map((r: { contact_id?: string }) => String(r.contact_id || '').trim())
+                .filter(Boolean)
+
+            if (memberIds.length === 0) {
+                return { data: [], total: 0 }
+            }
+
+            query = query.in('id', memberIds)
+        }
 
         if (search) {
             query = query.or(buildContactSearchOr(search))
@@ -636,10 +666,12 @@ export const contactDb = {
         search?: string | null
         status?: string | null
         tag?: string | null
+        listId?: string | null
     }): Promise<string[]> => {
         const search = (params.search || '').trim()
         const status = (params.status || '').trim()
         const tag = (params.tag || '').trim()
+        const listId = (params.listId || '').trim()
 
         const buildContactSearchOr = (raw: string) => {
             const term = String(raw || '').trim()
@@ -662,6 +694,25 @@ export const contactDb = {
         let query = supabase
             .from('contacts')
             .select('id')
+
+        if (listId && listId !== 'ALL') {
+            const { data: memberRows, error: membersError } = await supabase
+                .from('contact_list_members')
+                .select('contact_id')
+                .eq('list_id', listId)
+
+            if (membersError) throw membersError
+
+            const memberIds = (memberRows || [])
+                .map((r: { contact_id?: string }) => String(r.contact_id || '').trim())
+                .filter(Boolean)
+
+            if (memberIds.length === 0) {
+                return []
+            }
+
+            query = query.in('id', memberIds)
+        }
 
         if (search) {
             query = query.or(buildContactSearchOr(search))
@@ -1098,6 +1149,117 @@ export const contactDb = {
         }
 
         return Array.isArray(data) ? data : []
+    },
+
+    /**
+     * Aplica ou remove uma tag em vários contatos (merge no array jsonb).
+     */
+    bulkUpdateTags: async (
+        ids: string[],
+        tag: string,
+        action: 'add' | 'remove'
+    ): Promise<{ updated: number; notFound: string[] }> => {
+        const contactIds = Array.from(new Set((ids || []).map((v) => String(v || '').trim()).filter(Boolean)))
+        const tagName = normalizeTagName(tag)
+        if (contactIds.length === 0) return { updated: 0, notFound: [] }
+        if (!tagName) return { updated: 0, notFound: contactIds }
+
+        const { data, error } = await supabase
+            .from('contacts')
+            .select('*')
+            .in('id', contactIds)
+
+        if (error) throw error
+
+        const now = new Date().toISOString()
+        const rows = (data || []).map((row: any) => {
+            const current = Array.isArray(row.tags) ? row.tags : []
+            const next = action === 'add' ? mergeTags(current, [tagName]) : removeTags(current, [tagName])
+            return {
+                ...row,
+                tags: next,
+                updated_at: now,
+            }
+        })
+
+        const foundIds = new Set((data || []).map((r: any) => String(r.id)))
+        const notFound = contactIds.filter((id) => !foundIds.has(id))
+
+        if (rows.length === 0) {
+            return { updated: 0, notFound }
+        }
+
+        const { error: upsertError } = await supabase
+            .from('contacts')
+            .upsert(rows as any, { onConflict: 'id' })
+
+        if (upsertError) throw upsertError
+
+        return { updated: rows.length, notFound }
+    },
+
+    /**
+     * Renomeia uma tag em todos os contatos que a possuem.
+     */
+    renameTagGlobal: async (from: string, to: string): Promise<{ updated: number }> => {
+        const fromN = normalizeTagName(from)
+        const toN = normalizeTagName(to)
+        if (!fromN || !toN) return { updated: 0 }
+        if (fromN === toN) return { updated: 0 }
+
+        const { data, error } = await supabase
+            .from('contacts')
+            .select('*')
+            .filter('tags', 'cs', JSON.stringify([fromN]))
+
+        if (error) throw error
+        if (!data?.length) return { updated: 0 }
+
+        const now = new Date().toISOString()
+        const rows = data.map((row: any) => ({
+            ...row,
+            tags: renameTagInList(row.tags, fromN, toN),
+            updated_at: now,
+        }))
+
+        const { error: upsertError } = await supabase
+            .from('contacts')
+            .upsert(rows as any, { onConflict: 'id' })
+
+        if (upsertError) throw upsertError
+
+        return { updated: rows.length }
+    },
+
+    /**
+     * Remove uma tag de todos os contatos.
+     */
+    deleteTagGlobal: async (tag: string): Promise<{ updated: number }> => {
+        const tagName = normalizeTagName(tag)
+        if (!tagName) return { updated: 0 }
+
+        const { data, error } = await supabase
+            .from('contacts')
+            .select('*')
+            .filter('tags', 'cs', JSON.stringify([tagName]))
+
+        if (error) throw error
+        if (!data?.length) return { updated: 0 }
+
+        const now = new Date().toISOString()
+        const rows = data.map((row: any) => ({
+            ...row,
+            tags: removeTags(row.tags, [tagName]),
+            updated_at: now,
+        }))
+
+        const { error: upsertError } = await supabase
+            .from('contacts')
+            .upsert(rows as any, { onConflict: 'id' })
+
+        if (upsertError) throw upsertError
+
+        return { updated: rows.length }
     },
 
     getStats: async () => {
@@ -2261,5 +2423,197 @@ export const campaignTagDb = {
             .eq('tag_id', tagId)
 
         if (error) throw error
+    },
+}
+
+// ============================================================================
+// CONTACT LISTS (audiência estática)
+// ============================================================================
+
+export const contactListDb = {
+    getAll: async (): Promise<ContactList[]> => {
+        const { data, error } = await supabase
+            .from('contact_lists')
+            .select('*')
+            .order('name', { ascending: true })
+
+        if (error) throw error
+
+        return (data || []).map((row: any) => ({
+            id: row.id,
+            name: row.name,
+            color: row.color,
+            description: row.description ?? null,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+        }))
+    },
+
+    getAllWithCounts: async (): Promise<ContactList[]> => {
+        const { data: lists, error: listsError } = await supabase
+            .from('contact_lists')
+            .select('*')
+            .order('name', { ascending: true })
+
+        if (listsError) throw listsError
+
+        const { data: members, error: membersError } = await supabase
+            .from('contact_list_members')
+            .select('list_id')
+
+        if (membersError) throw membersError
+
+        const countMap = new Map<string, number>()
+        ;(members || []).forEach((m: any) => {
+            if (m.list_id) {
+                countMap.set(m.list_id, (countMap.get(m.list_id) || 0) + 1)
+            }
+        })
+
+        return (lists || []).map((row: any) => ({
+            id: row.id,
+            name: row.name,
+            color: row.color,
+            description: row.description ?? null,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            memberCount: countMap.get(row.id) || 0,
+        }))
+    },
+
+    getById: async (id: string): Promise<ContactList | undefined> => {
+        const { data, error } = await supabase
+            .from('contact_lists')
+            .select('*')
+            .eq('id', id)
+            .single()
+
+        if (error || !data) return undefined
+
+        const { count, error: countError } = await supabase
+            .from('contact_list_members')
+            .select('*', { count: 'exact', head: true })
+            .eq('list_id', id)
+
+        if (countError) throw countError
+
+        return {
+            id: data.id,
+            name: data.name,
+            color: data.color,
+            description: data.description ?? null,
+            createdAt: data.created_at,
+            updatedAt: data.updated_at,
+            memberCount: count || 0,
+        }
+    },
+
+    create: async (dto: CreateContactListDTO): Promise<ContactList> => {
+        const { data, error } = await supabase
+            .from('contact_lists')
+            .insert({
+                name: dto.name.trim(),
+                color: dto.color || '#6B7280',
+                description: dto.description?.trim() || null,
+            })
+            .select()
+            .single()
+
+        if (error) throw error
+
+        return {
+            id: data.id,
+            name: data.name,
+            color: data.color,
+            description: data.description ?? null,
+            createdAt: data.created_at,
+            updatedAt: data.updated_at,
+            memberCount: 0,
+        }
+    },
+
+    update: async (id: string, dto: UpdateContactListDTO): Promise<ContactList | undefined> => {
+        const updateData: Record<string, unknown> = {}
+
+        if (dto.name !== undefined) updateData.name = dto.name.trim()
+        if (dto.color !== undefined) updateData.color = dto.color
+        if (dto.description !== undefined) {
+            updateData.description = dto.description?.trim() || null
+        }
+
+        const { error } = await supabase
+            .from('contact_lists')
+            .update(updateData)
+            .eq('id', id)
+
+        if (error) throw error
+
+        return contactListDb.getById(id)
+    },
+
+    delete: async (id: string): Promise<void> => {
+        const { error } = await supabase
+            .from('contact_lists')
+            .delete()
+            .eq('id', id)
+
+        if (error) throw error
+    },
+
+    getMemberIds: async (listId: string): Promise<string[]> => {
+        const { data, error } = await supabase
+            .from('contact_list_members')
+            .select('contact_id')
+            .eq('list_id', listId)
+
+        if (error) throw error
+
+        return (data || [])
+            .map((r: any) => String(r.contact_id || '').trim())
+            .filter(Boolean)
+    },
+
+    addMembers: async (
+        listId: string,
+        contactIds: string[]
+    ): Promise<{ added: number }> => {
+        const ids = Array.from(
+            new Set((contactIds || []).map((v) => String(v || '').trim()).filter(Boolean))
+        )
+        if (ids.length === 0) return { added: 0 }
+
+        const rows = ids.map((contactId) => ({
+            list_id: listId,
+            contact_id: contactId,
+        }))
+
+        const { data, error } = await supabase
+            .from('contact_list_members')
+            .upsert(rows, { onConflict: 'list_id,contact_id', ignoreDuplicates: true })
+            .select('contact_id')
+
+        if (error) throw error
+
+        return { added: (data || []).length }
+    },
+
+    removeMembers: async (
+        listId: string,
+        contactIds: string[]
+    ): Promise<{ removed: number }> => {
+        const ids = Array.from(
+            new Set((contactIds || []).map((v) => String(v || '').trim()).filter(Boolean))
+        )
+        if (ids.length === 0) return { removed: 0 }
+
+        const { error } = await supabase
+            .from('contact_list_members')
+            .delete()
+            .eq('list_id', listId)
+            .in('contact_id', ids)
+
+        if (error) throw error
+
+        return { removed: ids.length }
     },
 }

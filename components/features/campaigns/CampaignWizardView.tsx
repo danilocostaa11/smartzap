@@ -114,6 +114,7 @@ export interface CampaignWizardViewProps {
   audienceStats?: AudienceStats;
   applyAudienceCriteria?: (criteria: AudienceCriteria, preset?: AudiencePreset) => void;
   selectAudiencePreset?: (preset: AudiencePreset) => void;
+  selectContactList?: (listId: string) => Promise<number>;
   availableTemplates: Template[];
   selectedTemplate?: Template;
   handleNext: () => void;
@@ -149,7 +150,7 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = (props) => 
     allContacts, filteredContacts, contactSearchTerm, setContactSearchTerm,
     selectedContacts, selectedContactIds, toggleContact,
     audiencePreset, audienceCriteria, topTag, audienceStats,
-    applyAudienceCriteria, selectAudiencePreset,
+    applyAudienceCriteria, selectAudiencePreset, selectContactList,
     availableTemplates, selectedTemplate,
     handleNext, handleBack, handlePrecheck, precheckResult, isPrechecking,
     handleSend, isCreating, testContact, isEnsuringTestContact,
@@ -328,6 +329,7 @@ export const CampaignWizardView: React.FC<CampaignWizardViewProps> = (props) => 
                 audiencePreset={audiencePreset} audienceCriteria={audienceCriteria}
                 audienceStats={audienceStats} topTag={topTag}
                 selectAudiencePreset={selectAudiencePreset} applyAudienceCriteria={applyAudienceCriteria}
+                selectContactList={selectContactList}
                 currentLimit={currentLimit} isOverLimit={isOverLimit}
                 isAudienceRefineOpen={uiState.isAudienceRefineOpen}
                 setIsAudienceRefineOpen={uiActions.setIsAudienceRefineOpen}

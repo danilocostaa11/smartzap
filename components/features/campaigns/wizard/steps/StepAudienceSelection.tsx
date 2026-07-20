@@ -1,11 +1,14 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import {
   TestContactCard,
   AudienceCardAll,
   AudienceCardSegments,
+  AudienceCardList,
+  ListsSheet,
   SegmentsSheet,
   RefineSheet,
   ContactSelectionList,
@@ -13,6 +16,8 @@ import {
   useAudienceSelection,
 } from './audience';
 import { LimitWarning } from '@/components/ui/LimitWarning';
+import { contactService } from '@/services/contactService';
+import { toast } from 'sonner';
 
 // Re-export types for backward compatibility
 export type {
@@ -46,6 +51,9 @@ export function StepAudienceSelection(props: StepAudienceSelectionProps) {
     audienceStats,
     selectAudiencePreset,
     applyAudienceCriteria,
+    selectContactList,
+    selectedListId,
+    onSelectedListIdChange,
     currentLimit,
     isOverLimit,
     isAudienceRefineOpen,
@@ -71,6 +79,15 @@ export function StepAudienceSelection(props: StepAudienceSelectionProps) {
     setShowUpgradeModal,
   } = props;
 
+  const [isListsSheetOpen, setIsListsSheetOpen] = useState(false);
+  const [localSelectedListId, setLocalSelectedListId] = useState<string | null>(selectedListId ?? null);
+
+  const listsQuery = useQuery({
+    queryKey: ['contactLists'],
+    queryFn: contactService.getLists,
+    staleTime: 30_000,
+  });
+
   // Derived state from hook
   const {
     eligibleContactsCount,
@@ -88,9 +105,16 @@ export function StepAudienceSelection(props: StepAudienceSelectionProps) {
     isJobsAudienceMode,
   });
 
+  const activeListId = selectedListId ?? localSelectedListId;
+  const selectedList = (listsQuery.data || []).find((l) => l.id === activeListId);
+  const isListCardSelected =
+    !!activeListId && recipientSource === 'specific' && selectedContactIds.length > 0 && !!selectedList;
+
   // Helper: pick one contact from segments sheet
   const pickOneContact = (contactId: string, prefillSearch?: string) => {
     if (recipientSource === 'test') return;
+    onSelectedListIdChange?.(null);
+    setLocalSelectedListId(null);
     selectAudiencePreset?.('manual');
     if (prefillSearch !== undefined) setContactSearchTerm(prefillSearch);
     setTimeout(() => {
@@ -116,35 +140,89 @@ export function StepAudienceSelection(props: StepAudienceSelectionProps) {
             <TestContactCard
               testContact={testContact}
               isSelected={isTestSelected}
-              onSelect={() => selectAudiencePreset?.('test')}
+              onSelect={() => {
+                onSelectedListIdChange?.(null);
+                setLocalSelectedListId(null);
+                selectAudiencePreset?.('test');
+              }}
               selectedTemplate={selectedTemplate}
               exchangeRate={exchangeRate}
             />
           )}
 
           {/* Main Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <AudienceCardAll
               eligibleContactsCount={eligibleContactsCount}
               currentLimit={currentLimit}
-              isSelected={isAllCardSelected}
-              onSelect={() => selectAudiencePreset?.('all')}
+              isSelected={isAllCardSelected && !isListCardSelected}
+              onSelect={() => {
+                onSelectedListIdChange?.(null);
+                setLocalSelectedListId(null);
+                selectAudiencePreset?.('all');
+              }}
               selectedTemplate={selectedTemplate}
               exchangeRate={exchangeRate}
             />
 
             <AudienceCardSegments
-              isSelected={isSegmentsCardSelected}
+              isSelected={isSegmentsCardSelected && !isListCardSelected}
               subtitle={segmentsSubtitle}
               recipientCount={recipientCount}
               onSelect={() => {
+                onSelectedListIdChange?.(null);
+                setLocalSelectedListId(null);
                 setIsSegmentsSheetOpen(true);
                 setIsAudienceRefineOpen(false);
               }}
               selectedTemplate={selectedTemplate}
               exchangeRate={exchangeRate}
             />
+
+            <AudienceCardList
+              isSelected={isListCardSelected}
+              subtitle={
+                selectedList
+                  ? `${selectedList.name} • ${selectedContactIds.length} contatos`
+                  : `${listsQuery.data?.length ?? 0} listas disponíveis`
+              }
+              recipientCount={isListCardSelected ? recipientCount : 0}
+              onSelect={() => {
+                setIsListsSheetOpen(true);
+                setIsSegmentsSheetOpen(false);
+                setIsAudienceRefineOpen(false);
+              }}
+              selectedTemplate={selectedTemplate}
+              exchangeRate={exchangeRate}
+            />
           </div>
+
+          {isListsSheetOpen && (
+            <ListsSheet
+              lists={listsQuery.data || []}
+              selectedListId={activeListId}
+              isLoading={listsQuery.isLoading}
+              onClose={() => setIsListsSheetOpen(false)}
+              onSelect={async (listId) => {
+                if (!selectContactList) {
+                  toast.error('Seleção de lista indisponível');
+                  return;
+                }
+                try {
+                  const count = await selectContactList(listId);
+                  setLocalSelectedListId(listId);
+                  onSelectedListIdChange?.(listId);
+                  toast.success(
+                    count > 0
+                      ? `Lista selecionada: ${count} contato(s)`
+                      : 'Lista vazia — adicione contatos em Contatos → Listas'
+                  );
+                } catch (error: any) {
+                  toast.error(error?.message || 'Falha ao carregar lista');
+                }
+              }}
+            />
+          )}
 
           {/* Segments Sheet */}
           {isSegmentsSheetOpen && (

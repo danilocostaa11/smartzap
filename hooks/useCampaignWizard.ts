@@ -412,6 +412,32 @@ export const useCampaignWizardController = () => {
     });
   }, [allContacts, suppressedPhones, topTag]);
 
+  const selectContactList = useCallback(async (listId: string) => {
+    const { contactService } = await import('@/services/contactService');
+    const ids = await contactService.getListMemberIds(listId);
+    dispatchAudience({
+      type: 'APPLY_PRESET',
+      payload: {
+        source: 'specific',
+        preset: 'manual',
+        criteria: {
+          status: 'ALL',
+          includeTag: null,
+          createdWithinDays: null,
+          excludeOptOut: true,
+          noTags: false,
+          uf: null,
+          ddi: null,
+          customFieldKey: null,
+          customFieldMode: null,
+          customFieldValue: null,
+        },
+        selectedIds: ids,
+      },
+    });
+    return ids.length;
+  }, []);
+
   // Default audience (Jobs-mode): novos (7d), once contacts are available.
   useEffect(() => {
     if (step !== 2) return;
@@ -720,6 +746,7 @@ export const useCampaignWizardController = () => {
     topTag,
     applyAudienceCriteria,
     selectAudiencePreset,
+    selectContactList,
     audienceStats,
     availableTemplates,
     selectedTemplate,

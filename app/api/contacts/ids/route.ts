@@ -18,8 +18,9 @@ export async function GET(request: Request) {
     const search = url.searchParams.get('search') || ''
     const status = url.searchParams.get('status') || ''
     const tag = url.searchParams.get('tag') || ''
+    const listId = url.searchParams.get('listId') || ''
 
-    const ids = await contactDb.getIds({ search, status, tag })
+    const ids = await contactDb.getIds({ search, status, tag, listId })
     return NextResponse.json(ids, {
       headers: {
         'Cache-Control': 'private, no-store, no-cache, must-revalidate, max-age=0',

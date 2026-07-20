@@ -19,15 +19,19 @@ export function ContactsClientWrapper({ initialData }: ContactsClientWrapperProp
       contacts={controller.contacts}
       stats={controller.stats}
       tags={controller.tags}
+      lists={controller.lists}
       customFields={controller.customFields}
       onRefreshCustomFields={controller.refreshCustomFields}
       isLoading={showLoading}
+      isListsLoading={controller.isListsLoading}
       searchTerm={controller.searchTerm}
       onSearchChange={controller.setSearchTerm}
       statusFilter={controller.statusFilter}
       onStatusFilterChange={controller.setStatusFilter}
       tagFilter={controller.tagFilter}
       onTagFilterChange={controller.setTagFilter}
+      listFilter={controller.listFilter}
+      onListFilterChange={controller.setListFilter}
       currentPage={controller.currentPage}
       totalPages={controller.totalPages}
       totalFiltered={controller.totalFiltered}
@@ -58,6 +62,15 @@ export function ContactsClientWrapper({ initialData }: ContactsClientWrapperProp
       onImport={controller.onImport}
       isImporting={controller.isImporting}
       isDeleting={controller.isDeleting}
+      onCreateList={controller.onCreateList}
+      onUpdateList={controller.onUpdateList}
+      onDeleteList={controller.onDeleteList}
+      onAddSelectionToList={controller.onAddSelectionToList}
+      onCreateTag={controller.onCreateTag}
+      onRenameTag={controller.onRenameTag}
+      onDeleteTag={controller.onDeleteTag}
+      onBulkTag={controller.onBulkTag}
+      isBulkUpdating={controller.isBulkUpdating}
     />
   )
 }

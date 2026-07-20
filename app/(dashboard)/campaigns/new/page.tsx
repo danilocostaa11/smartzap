@@ -164,6 +164,7 @@ export default function CampaignsNewRealPage() {
   const preselectedTemplateName = searchParams?.get('templateName') || null
   const [step, setStep] = useState(1)
   const [audienceMode, setAudienceMode] = useState('todos')
+  const [selectedListId, setSelectedListId] = useState<string | null>(null)
   const [combineMode, setCombineMode] = useState('or')
   const [collapseAudienceChoice, setCollapseAudienceChoice] = useState(false)
   const [collapseQuickSegments, setCollapseQuickSegments] = useState(false)
@@ -269,6 +270,31 @@ export default function CampaignsNewRealPage() {
     queryFn: () => fetchJson<string[]>('/api/contacts/tags'),
     staleTime: 60_000,
     enabled: step >= 2,
+  })
+
+  const listsQuery = useQuery({
+    queryKey: ['contactLists'],
+    queryFn: async () => {
+      const res = await fetchJson<{ lists: Array<{ id: string; name: string; memberCount?: number }> }>(
+        '/api/contacts/lists'
+      )
+      return res.lists || []
+    },
+    staleTime: 30_000,
+    enabled: step >= 2,
+  })
+
+  const listMemberIdsQuery = useQuery({
+    queryKey: ['contactListMemberIds', selectedListId],
+    queryFn: async () => {
+      if (!selectedListId) return [] as string[]
+      const res = await fetchJson<{ contactIds: string[] }>(
+        `/api/contacts/lists/${encodeURIComponent(selectedListId)}/member-ids`
+      )
+      return res.contactIds || []
+    },
+    enabled: step >= 2 && audienceMode === 'lista' && !!selectedListId,
+    staleTime: 15_000,
   })
 
   const statsQuery = useQuery({
@@ -665,6 +691,15 @@ export default function CampaignsNewRealPage() {
 
     const contacts = await fetchJson<Contact[]>('/api/contacts')
     if (audienceMode === 'todos') return contacts
+
+    if (audienceMode === 'lista') {
+      if (!selectedListId) return []
+      const memberRes = await fetchJson<{ contactIds: string[] }>(
+        `/api/contacts/lists/${encodeURIComponent(selectedListId)}/member-ids`
+      )
+      const ids = new Set(memberRes.contactIds || [])
+      return contacts.filter((c) => ids.has(c.id))
+    }
 
     if (!selectedTags.length && !selectedCountries.length && !selectedStates.length) {
       return contacts
@@ -1130,9 +1165,18 @@ export default function CampaignsNewRealPage() {
 
   const baseCount = statsQuery.data?.total ?? 0
   const segmentEstimate = segmentCountQuery.data?.matched ?? baseCount
+  const listCount = listMemberIdsQuery.data?.length ?? 0
   const audienceCount =
-    audienceMode === 'todos' ? baseCount : audienceMode === 'segmentos' ? segmentEstimate : selectedTestCount
-  const isSegmentCountLoading = audienceMode === 'segmentos' && segmentCountQuery.isFetching
+    audienceMode === 'todos'
+      ? baseCount
+      : audienceMode === 'segmentos'
+        ? segmentEstimate
+        : audienceMode === 'lista'
+          ? listCount
+          : selectedTestCount
+  const isSegmentCountLoading =
+    (audienceMode === 'segmentos' && segmentCountQuery.isFetching) ||
+    (audienceMode === 'lista' && listMemberIdsQuery.isFetching)
   const formatCurrency = (value: number) => `R$ ${value.toFixed(2).replace('.', ',')}`
 
   // Quando skipIgnored=true, usar apenas os contatos válidos do precheck
@@ -1375,7 +1419,12 @@ export default function CampaignsNewRealPage() {
   }, [previewContact, templateButtonVars, templateSpec, templateVars.body, templateVars.header])
 
   const isConfigComplete = Boolean(campaignName.trim()) && templateSelected && missingTemplateVars === 0
-  const isAudienceComplete = audienceMode === 'teste' ? selectedTestCount > 0 : audienceCount > 0
+  const isAudienceComplete =
+    audienceMode === 'teste'
+      ? selectedTestCount > 0
+      : audienceMode === 'lista'
+        ? Boolean(selectedListId) && audienceCount > 0
+        : audienceCount > 0
   const precheckNeedsFix =
     Boolean(precheckTotals && precheckTotals.skipped > 0) && (fixCandidates.length > 0 || bulkKeys.length > 0)
   const isPrecheckOk =
@@ -2090,6 +2139,7 @@ export default function CampaignsNewRealPage() {
                       <div className="mt-1 text-sm font-semibold text-[var(--ds-text-primary)]">
                         {audienceMode === 'todos' && 'Todos'}
                         {audienceMode === 'segmentos' && 'Segmentos'}
+                        {audienceMode === 'lista' && 'Lista'}
                         {audienceMode === 'teste' && 'Teste'}
                       </div>
                     </div>
@@ -2107,10 +2157,11 @@ export default function CampaignsNewRealPage() {
                       <h2 className="text-lg font-semibold text-[var(--ds-text-primary)]">Escolha o público</h2>
                       <p className="text-sm text-[var(--ds-text-muted)]">Uma decisao rapida antes dos filtros.</p>
                     </div>
-                    <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-4">
                       {[
                         { label: 'Todos', value: 'todos', helper: `${statsQuery.data?.optIn ?? 0} contatos elegíveis` },
                         { label: 'Segmentos', value: 'segmentos', helper: 'Filtrar por tags, DDI ou UF' },
+                        { label: 'Lista', value: 'lista', helper: `${listsQuery.data?.length ?? 0} listas salvas` },
                         { label: 'Teste', value: 'teste', helper: 'Enviar para contato de teste' },
                       ].map((item) => (
                         <button
@@ -2155,6 +2206,49 @@ export default function CampaignsNewRealPage() {
                   <p className="mt-4 text-xs text-[var(--ds-text-muted)]">
                     Envio para todos os contatos válidos, excluindo opt-out e suprimidos.
                   </p>
+                </div>
+              )}
+
+              {audienceMode === 'lista' && (
+                <div className="rounded-2xl border border-[var(--ds-border-default)] bg-[var(--ds-bg-surface)] p-6 shadow-[0_12px_30px_rgba(0,0,0,0.35)]">
+                  <div className="space-y-1">
+                    <h2 className="text-lg font-semibold text-[var(--ds-text-primary)]">Lista salva</h2>
+                    <p className="text-sm text-[var(--ds-text-muted)]">
+                      Escolha uma lista estática criada em Contatos.
+                    </p>
+                  </div>
+                  <div className="mt-5 space-y-3">
+                    {(listsQuery.data || []).length === 0 ? (
+                      <p className="text-sm text-[var(--ds-text-muted)]">
+                        Nenhuma lista ainda. Crie em Contatos → Listas e adicione leads.
+                      </p>
+                    ) : (
+                      (listsQuery.data || []).map((list) => (
+                        <button
+                          key={list.id}
+                          type="button"
+                          onClick={() => setSelectedListId(list.id)}
+                          className={`w-full rounded-xl border px-4 py-3 text-left text-sm ${
+                            selectedListId === list.id
+                              ? 'border-emerald-600 dark:border-emerald-400/40 bg-emerald-100 dark:bg-emerald-500/10 text-[var(--ds-text-primary)]'
+                              : 'border-[var(--ds-border-default)] bg-[var(--ds-bg-elevated)] text-[var(--ds-text-secondary)]'
+                          }`}
+                        >
+                          <div className="font-semibold">{list.name}</div>
+                          <div className="mt-1 text-xs text-[var(--ds-text-muted)]">
+                            {list.memberCount ?? 0} contato(s)
+                          </div>
+                        </button>
+                      ))
+                    )}
+                    {selectedListId && (
+                      <p className="text-xs text-[var(--ds-text-muted)]">
+                        {listMemberIdsQuery.isFetching
+                          ? 'Carregando membros...'
+                          : `${listMemberIdsQuery.data?.length ?? 0} destinatários nesta lista`}
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
 

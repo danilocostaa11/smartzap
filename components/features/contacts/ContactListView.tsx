@@ -2,9 +2,11 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
-import { Trash2, UploadCloud, Download, FileText, Plus } from 'lucide-react';
-import { Contact, ContactStatus, CustomFieldDefinition } from '../../../types';
+import { Trash2, UploadCloud, Download, FileText, Plus, List, Tags } from 'lucide-react';
+import { Contact, ContactStatus, CustomFieldDefinition, ContactList } from '../../../types';
 import { CustomFieldsSheet } from './CustomFieldsSheet';
+import { ContactListsSheet } from './ContactListsSheet';
+import { ContactTagsSheet } from './ContactTagsSheet';
 import { Page, PageActions, PageDescription, PageHeader, PageTitle } from '@/components/ui/page';
 import { Container } from '@/components/ui/container';
 import { Button } from '@/components/ui/button';
@@ -42,9 +44,11 @@ export interface ContactListViewProps {
   contacts: Contact[];
   stats: ContactStatsData;
   tags: string[];
+  lists: ContactList[];
   customFields?: CustomFieldDefinition[];
   onRefreshCustomFields?: () => void;
   isLoading: boolean;
+  isListsLoading?: boolean;
 
   // Search & Filters
   searchTerm: string;
@@ -53,6 +57,8 @@ export interface ContactListViewProps {
   onStatusFilterChange: (status: ContactStatus | 'ALL' | 'SUPPRESSED') => void;
   tagFilter: string;
   onTagFilterChange: (tag: string) => void;
+  listFilter: string;
+  onListFilterChange: (listId: string) => void;
 
   // Pagination
   currentPage: number;
@@ -91,19 +97,34 @@ export interface ContactListViewProps {
   onImport: (contacts: ImportContact[]) => Promise<{ inserted: number; updated: number }>;
   isImporting: boolean;
   isDeleting: boolean;
+
+  // Lists & tags
+  onCreateList: (data: { name: string; color?: string }) => Promise<void>;
+  onUpdateList: (id: string, data: { name?: string; color?: string }) => Promise<void>;
+  onDeleteList: (id: string) => Promise<void>;
+  onAddSelectionToList: (listId: string) => Promise<void>;
+  onCreateTag: (tag: string) => Promise<void>;
+  onRenameTag: (from: string, to: string) => Promise<void>;
+  onDeleteTag: (tag: string) => Promise<void>;
+  onBulkTag: (tag: string, action: 'add' | 'remove') => Promise<void>;
+  isBulkUpdating?: boolean;
 }
 
 export const ContactListView: React.FC<ContactListViewProps> = ({
   contacts,
   stats,
   tags,
+  lists,
   isLoading,
+  isListsLoading,
   searchTerm,
   onSearchChange,
   statusFilter,
   onStatusFilterChange,
   tagFilter,
   onTagFilterChange,
+  listFilter,
+  onListFilterChange,
   currentPage,
   totalPages,
   totalFiltered,
@@ -135,11 +156,22 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
   isImporting,
   isDeleting,
   customFields,
-  onRefreshCustomFields
+  onRefreshCustomFields,
+  onCreateList,
+  onUpdateList,
+  onDeleteList,
+  onAddSelectionToList,
+  onCreateTag,
+  onRenameTag,
+  onDeleteTag,
+  onBulkTag,
+  isBulkUpdating,
 }) => {
   // Local state
   const [showFilters, setShowFilters] = useState(false);
   const [localCustomFields, setLocalCustomFields] = useState<CustomFieldDefinition[]>([]);
+  const [bulkListId, setBulkListId] = useState('');
+  const [bulkTag, setBulkTag] = useState('');
 
   // Initialize local custom fields from props
   useEffect(() => {
@@ -164,13 +196,15 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
 
   // Computed values
   const showSuppressionDetails = statusFilter === 'SUPPRESSED';
-  const hasActiveFilters = statusFilter !== 'ALL' || tagFilter !== 'ALL' || !!searchTerm;
+  const hasActiveFilters =
+    statusFilter !== 'ALL' || tagFilter !== 'ALL' || listFilter !== 'ALL' || !!searchTerm;
 
   const handleClearFilters = useCallback(() => {
     onSearchChange('');
     onStatusFilterChange('ALL');
     onTagFilterChange('ALL');
-  }, [onSearchChange, onStatusFilterChange, onTagFilterChange]);
+    onListFilterChange('ALL');
+  }, [onSearchChange, onStatusFilterChange, onTagFilterChange, onListFilterChange]);
 
   // Memoized toggle handler to prevent ContactFilters re-render
   const handleToggleFilters = useCallback(() => setShowFilters((prev) => !prev), []);
@@ -244,7 +278,7 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
       <PageHeader>
         <div>
           <PageTitle>Contatos</PageTitle>
-          <PageDescription>Gerencie sua audiência e listas</PageDescription>
+          <PageDescription>Gerencie sua audiência, listas e tags</PageDescription>
         </div>
 
         <PageActions className="flex-wrap justify-start sm:justify-end">
@@ -283,6 +317,32 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
               <Trash2 size={18} aria-hidden="true" />
             </Button>
           )}
+
+          <ContactListsSheet
+            lists={lists}
+            isLoading={isListsLoading}
+            onCreate={onCreateList}
+            onUpdate={onUpdateList}
+            onDelete={onDeleteList}
+            onSelectList={onListFilterChange}
+          >
+            <Button variant="outline" type="button" aria-label="Gerenciar listas">
+              <List size={18} aria-hidden="true" />
+              Listas
+            </Button>
+          </ContactListsSheet>
+
+          <ContactTagsSheet
+            tags={tags}
+            onCreate={onCreateTag}
+            onRename={onRenameTag}
+            onDelete={onDeleteTag}
+          >
+            <Button variant="outline" type="button" aria-label="Gerenciar tags">
+              <Tags size={18} aria-hidden="true" />
+              Tags
+            </Button>
+          </ContactTagsSheet>
 
           <CustomFieldsSheet
             entityType="contact"
@@ -324,6 +384,9 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
           tagFilter={tagFilter}
           onTagFilterChange={onTagFilterChange}
           tags={tags}
+          listFilter={listFilter}
+          onListFilterChange={onListFilterChange}
+          lists={lists}
           showFilters={showFilters}
           onToggleFilters={handleToggleFilters}
         />
@@ -345,6 +408,87 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
             onSelectAllGlobal={selectAllGlobal}
             onClearSelection={clearSelection}
           />
+        )}
+
+        {/* Bulk actions for selection */}
+        {isSomeSelected && (
+          <div className="px-5 py-3 border-b border-[var(--ds-border-subtle)] flex flex-col sm:flex-row gap-3 sm:items-center bg-[var(--ds-bg-hover)]">
+            <span className="text-sm text-[var(--ds-text-secondary)]">
+              {selectedIds.size} selecionado(s)
+            </span>
+            <div className="flex flex-wrap items-center gap-2 flex-1">
+              <select
+                value={bulkListId}
+                onChange={(e) => setBulkListId(e.target.value)}
+                className="px-3 py-2 text-sm rounded-lg bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] text-[var(--ds-text-primary)]"
+                aria-label="Escolher lista"
+              >
+                <option value="">Adicionar à lista...</option>
+                {lists.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!bulkListId || isBulkUpdating}
+                onClick={() => {
+                  if (!bulkListId) return
+                  void onAddSelectionToList(bulkListId).then(() => setBulkListId(''))
+                }}
+              >
+                Adicionar
+              </Button>
+
+              <select
+                value={bulkTag}
+                onChange={(e) => setBulkTag(e.target.value)}
+                className="px-3 py-2 text-sm rounded-lg bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] text-[var(--ds-text-primary)]"
+                aria-label="Escolher tag"
+              >
+                <option value="">Tag existente...</option>
+                {tags.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+              <input
+                value={bulkTag}
+                onChange={(e) => setBulkTag(e.target.value)}
+                placeholder="ou digite nova tag"
+                className="px-3 py-2 text-sm rounded-lg bg-[var(--ds-bg-elevated)] border border-[var(--ds-border-default)] text-[var(--ds-text-primary)] w-40"
+                list="bulk-tag-suggestions"
+              />
+              <datalist id="bulk-tag-suggestions">
+                {tags.map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!bulkTag.trim() || isBulkUpdating}
+                onClick={() => {
+                  const t = bulkTag.trim()
+                  if (!t) return
+                  void onBulkTag(t, 'add').then(() => setBulkTag(''))
+                }}
+              >
+                Aplicar tag
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!bulkTag.trim() || isBulkUpdating}
+                onClick={() => {
+                  const t = bulkTag.trim()
+                  if (!t) return
+                  void onBulkTag(t, 'remove').then(() => setBulkTag(''))
+                }}
+              >
+                Remover tag
+              </Button>
+            </div>
+          </div>
         )}
 
         {/* Table */}

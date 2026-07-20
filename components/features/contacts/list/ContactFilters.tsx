@@ -18,6 +18,11 @@ export interface ContactFiltersProps {
   onTagFilterChange: (tag: string) => void;
   tags: string[];
 
+  // List filter
+  listFilter: string;
+  onListFilterChange: (listId: string) => void;
+  lists: { id: string; name: string; memberCount?: number }[];
+
   // Filter visibility
   showFilters: boolean;
   onToggleFilters: () => void;
@@ -39,6 +44,9 @@ export const ContactFilters: React.FC<ContactFiltersProps> = ({
   tagFilter,
   onTagFilterChange,
   tags,
+  listFilter,
+  onListFilterChange,
+  lists,
   showFilters,
   onToggleFilters
 }) => {
@@ -58,10 +66,10 @@ export const ContactFilters: React.FC<ContactFiltersProps> = ({
       </div>
 
       {/* Filter Toggles */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={onToggleFilters}
-          className={`p-2.5 rounded-xl border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 focus-visible:outline-offset-2 ${showFilters || statusFilter !== 'ALL' || tagFilter !== 'ALL'
+          className={`p-2.5 rounded-xl border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 focus-visible:outline-offset-2 ${showFilters || statusFilter !== 'ALL' || tagFilter !== 'ALL' || listFilter !== 'ALL'
             ? 'text-primary-400 bg-primary-500/10 border-primary-500/30'
             : 'text-[var(--ds-text-secondary)] hover:text-[var(--ds-text-primary)] hover:bg-[var(--ds-bg-hover)] border-[var(--ds-border-default)]'
             }`}
@@ -93,6 +101,21 @@ export const ContactFilters: React.FC<ContactFiltersProps> = ({
           <option value="ALL">Todas Tags</option>
           {tags.map(tag => (
             <option key={tag} value={tag}>{tag}</option>
+          ))}
+        </select>
+
+        {/* List Filter */}
+        <select
+          value={listFilter}
+          onChange={(e) => onListFilterChange(e.target.value)}
+          className="px-4 py-2.5 text-sm font-medium bg-[var(--ds-bg-elevated)] text-[var(--ds-text-primary)] hover:text-[var(--ds-text-primary)] rounded-xl border border-[var(--ds-border-default)] transition-colors outline-none cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500 focus-visible:outline-offset-2"
+          aria-label="Filtrar contatos por lista"
+        >
+          <option value="ALL">Todas Listas</option>
+          {lists.map(list => (
+            <option key={list.id} value={list.id}>
+              {list.name}{typeof list.memberCount === 'number' ? ` (${list.memberCount})` : ''}
+            </option>
           ))}
         </select>
       </div>

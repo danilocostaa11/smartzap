@@ -75,6 +75,9 @@ export interface StepAudienceSelectionProps {
   // Audience actions
   selectAudiencePreset?: (preset: NonNullable<AudiencePreset>) => void;
   applyAudienceCriteria?: (criteria: AudienceCriteria, preset?: NonNullable<AudiencePreset>) => void;
+  selectContactList?: (listId: string) => Promise<number>;
+  selectedListId?: string | null;
+  onSelectedListIdChange?: (listId: string | null) => void;
 
   // Limits
   currentLimit: number;

@@ -29,6 +29,7 @@ export interface ContactListParams {
   search?: string;
   status?: string;
   tag?: string;
+  listId?: string;
 }
 
 export interface ContactListResult {
@@ -76,6 +77,156 @@ export const contactService = {
     return response.json();
   },
 
+  createTag: async (tag: string, contactIds: string[] = []): Promise<{ tag: string; tags: string[] }> => {
+    const response = await fetch('/api/contacts/tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tag, contactIds }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Falha ao criar tag');
+    }
+    return response.json();
+  },
+
+  renameTag: async (from: string, to: string): Promise<{ updated: number; tags: string[] }> => {
+    const response = await fetch('/api/contacts/tags', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Falha ao renomear tag');
+    }
+    return response.json();
+  },
+
+  deleteTag: async (tag: string): Promise<{ updated: number; tags: string[] }> => {
+    const response = await fetch('/api/contacts/tags', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tag }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Falha ao excluir tag');
+    }
+    return response.json();
+  },
+
+  bulkUpdateTags: async (
+    contactIds: string[],
+    tag: string,
+    action: 'add' | 'remove'
+  ): Promise<{ updated: number; notFound: string[] }> => {
+    const response = await fetch('/api/contacts/bulk-tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactIds, tag, action }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Falha ao atualizar tags');
+    }
+    return response.json();
+  },
+
+  getLists: async (): Promise<import('../types').ContactList[]> => {
+    const response = await fetch('/api/contacts/lists', { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('Falha ao buscar listas');
+    }
+    const data = await response.json();
+    return data.lists || [];
+  },
+
+  createList: async (dto: {
+    name: string;
+    color?: string;
+    description?: string | null;
+  }): Promise<import('../types').ContactList> => {
+    const response = await fetch('/api/contacts/lists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dto),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Falha ao criar lista');
+    }
+    return response.json();
+  },
+
+  updateList: async (
+    id: string,
+    dto: { name?: string; color?: string; description?: string | null }
+  ): Promise<import('../types').ContactList> => {
+    const response = await fetch(`/api/contacts/lists/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dto),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Falha ao atualizar lista');
+    }
+    return response.json();
+  },
+
+  deleteList: async (id: string): Promise<void> => {
+    const response = await fetch(`/api/contacts/lists/${id}`, { method: 'DELETE' });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Falha ao excluir lista');
+    }
+  },
+
+  addListMembers: async (
+    listId: string,
+    contactIds: string[]
+  ): Promise<{ added: number }> => {
+    const response = await fetch(`/api/contacts/lists/${listId}/members`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactIds }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Falha ao adicionar à lista');
+    }
+    return response.json();
+  },
+
+  removeListMembers: async (
+    listId: string,
+    contactIds: string[]
+  ): Promise<{ removed: number }> => {
+    const response = await fetch(`/api/contacts/lists/${listId}/members`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactIds }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Falha ao remover da lista');
+    }
+    return response.json();
+  },
+
+  getListMemberIds: async (listId: string): Promise<string[]> => {
+    const response = await fetch(`/api/contacts/lists/${listId}/member-ids`, {
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || 'Falha ao buscar membros da lista');
+    }
+    const data = await response.json();
+    return data.contactIds || [];
+  },
+
   list: async (params: ContactListParams): Promise<ContactListResult> => {
     const searchParams = new URLSearchParams();
     searchParams.set('limit', String(params.limit));
@@ -83,6 +234,7 @@ export const contactService = {
     if (params.search) searchParams.set('search', params.search);
     if (params.status && params.status !== 'ALL') searchParams.set('status', params.status);
     if (params.tag && params.tag !== 'ALL') searchParams.set('tag', params.tag);
+    if (params.listId && params.listId !== 'ALL') searchParams.set('listId', params.listId);
 
     const response = await fetch(`/api/contacts?${searchParams.toString()}`, { cache: 'no-store' });
     if (!response.ok) {
@@ -91,11 +243,12 @@ export const contactService = {
     return response.json();
   },
 
-  getIds: async (params: { search?: string; status?: string; tag?: string }): Promise<string[]> => {
+  getIds: async (params: { search?: string; status?: string; tag?: string; listId?: string }): Promise<string[]> => {
     const searchParams = new URLSearchParams();
     if (params.search) searchParams.set('search', params.search);
     if (params.status && params.status !== 'ALL') searchParams.set('status', params.status);
     if (params.tag && params.tag !== 'ALL') searchParams.set('tag', params.tag);
+    if (params.listId && params.listId !== 'ALL') searchParams.set('listId', params.listId);
 
     const qs = searchParams.toString();
     const response = await fetch(`/api/contacts/ids${qs ? `?${qs}` : ''}`, { cache: 'no-store' });

@@ -26,13 +26,15 @@ export async function GET(request: Request) {
     const search = url.searchParams.get('search') || ''
     const status = url.searchParams.get('status') || ''
     const tag = url.searchParams.get('tag') || ''
+    const listId = url.searchParams.get('listId') || ''
 
     const wantsPaged =
       limitParam !== null ||
       offsetParam !== null ||
       search.length > 0 ||
       status.length > 0 ||
-      tag.length > 0
+      tag.length > 0 ||
+      listId.length > 0
 
     if (wantsPaged) {
       const limitRaw = Number(limitParam)
@@ -46,6 +48,7 @@ export async function GET(request: Request) {
         search,
         status,
         tag,
+        listId,
       })
 
       return NextResponse.json(

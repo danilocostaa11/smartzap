@@ -23,6 +23,7 @@ interface ContactsQueryParams {
   search: string
   status: ContactStatus | 'ALL' | 'SUPPRESSED'
   tag: string
+  listId: string
 }
 
 /**
@@ -36,6 +37,7 @@ const createContactsQueryKey = (params: ContactsQueryParams) => [
     search: (params.search || '').trim().toLowerCase(),
     status: params.status || 'ALL',
     tag: params.tag || 'ALL',
+    listId: params.listId || 'ALL',
   }
 ] as const;
 
@@ -49,6 +51,7 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<ContactStatus | 'ALL' | 'SUPPRESSED'>('ALL');
   const [tagFilter, setTagFilter] = useState<string>('ALL');
+  const [listFilter, setListFilter] = useState<string>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
 
   // Modal State
@@ -69,11 +72,17 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
     search: searchTerm,
     status: statusFilter,
     tag: tagFilter,
+    listId: listFilter,
   };
   const contactsQueryKey = createContactsQueryKey(queryParams);
 
   // Se temos initialData e estamos na página 1 sem filtros, usamos como dados iniciais
-  const isFirstPageNoFilters = currentPage === 1 && !searchTerm.trim() && statusFilter === 'ALL' && tagFilter === 'ALL'
+  const isFirstPageNoFilters =
+    currentPage === 1 &&
+    !searchTerm.trim() &&
+    statusFilter === 'ALL' &&
+    tagFilter === 'ALL' &&
+    listFilter === 'ALL'
   const contactsInitial = isFirstPageNoFilters && initialData
     ? { data: initialData.contacts, total: initialData.total }
     : undefined
@@ -86,6 +95,7 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
       search: searchTerm.trim(),
       status: statusFilter,
       tag: tagFilter,
+      listId: listFilter,
     }),
     initialData: contactsInitial,
     staleTime: CACHE.contacts,
@@ -127,6 +137,12 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
     staleTime: CACHE.stats,
   });
 
+  const listsQuery = useQuery({
+    queryKey: ['contactLists'],
+    queryFn: contactService.getLists,
+    staleTime: CACHE.stats,
+  });
+
   const customFieldsQuery = useQuery({
     queryKey: ['customFields'],
     queryFn: () => customFieldService.getAll(),
@@ -136,6 +152,11 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
 
   const refreshCustomFields = () => {
     queryClient.invalidateQueries({ queryKey: ['customFields'] });
+  };
+
+  const invalidateListsAndContacts = () => {
+    queryClient.invalidateQueries({ queryKey: ['contactLists'] });
+    invalidateContacts(queryClient);
   };
 
   // NOTA: Realtime agora é gerenciado pelo CentralizedRealtimeProvider
@@ -345,11 +366,16 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
     setCurrentPage(1);
   }, []);
 
+  const handleListFilterChange = useCallback((listId: string) => {
+    setListFilter(listId);
+    setCurrentPage(1);
+  }, []);
+
   // --- Selection Logic (extracted to reusable hook) ---
   const pageContactIds = useMemo(() => contacts.map(c => c.id), [contacts]);
   const selectionFilters = useMemo(
-    () => ({ search: searchTerm, status: statusFilter, tag: tagFilter }),
-    [searchTerm, statusFilter, tagFilter]
+    () => ({ search: searchTerm, status: statusFilter, tag: tagFilter, listId: listFilter }),
+    [searchTerm, statusFilter, tagFilter, listFilter]
   );
   const {
     selectedIds,
@@ -361,6 +387,98 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
     isAllSelected,
     isSomeSelected,
   } = useContactSelection(pageContactIds, selectionFilters);
+
+  const createListMutation = useMutation({
+    mutationFn: contactService.createList,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['contactLists'] });
+      toast.success('Lista criada!');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Erro ao criar lista'),
+  });
+
+  const updateListMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; color?: string } }) =>
+      contactService.updateList(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['contactLists'] });
+      toast.success('Lista atualizada!');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Erro ao atualizar lista'),
+  });
+
+  const deleteListMutation = useMutation({
+    mutationFn: contactService.deleteList,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['contactLists'] });
+      if (listFilter !== 'ALL') setListFilter('ALL');
+      invalidateContacts(queryClient);
+      toast.success('Lista excluída!');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Erro ao excluir lista'),
+  });
+
+  const addToListMutation = useMutation({
+    mutationFn: ({ listId, contactIds }: { listId: string; contactIds: string[] }) =>
+      contactService.addListMembers(listId, contactIds),
+    onSuccess: (result) => {
+      invalidateListsAndContacts();
+      clearSelection();
+      toast.success(`${result.added} contato(s) adicionados à lista`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Erro ao adicionar à lista'),
+  });
+
+  const createTagMutation = useMutation({
+    mutationFn: (tag: string) => contactService.createTag(tag),
+    onSuccess: (result) => {
+      queryClient.setQueryData(['contactTags'], result.tags);
+      toast.success('Tag pronta para uso');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Erro ao criar tag'),
+  });
+
+  const renameTagMutation = useMutation({
+    mutationFn: ({ from, to }: { from: string; to: string }) => contactService.renameTag(from, to),
+    onSuccess: (result) => {
+      queryClient.setQueryData(['contactTags'], result.tags);
+      invalidateContacts(queryClient);
+      toast.success(`Tag renomeada em ${result.updated} contato(s)`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Erro ao renomear tag'),
+  });
+
+  const deleteTagMutation = useMutation({
+    mutationFn: (tag: string) => contactService.deleteTag(tag),
+    onSuccess: (result) => {
+      queryClient.setQueryData(['contactTags'], result.tags);
+      if (tagFilter !== 'ALL') setTagFilter('ALL');
+      invalidateContacts(queryClient);
+      toast.success(`Tag removida de ${result.updated} contato(s)`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Erro ao excluir tag'),
+  });
+
+  const bulkTagsMutation = useMutation({
+    mutationFn: ({
+      tag,
+      action,
+    }: {
+      tag: string;
+      action: 'add' | 'remove';
+    }) => contactService.bulkUpdateTags(Array.from(selectedIds), tag, action),
+    onSuccess: (result, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['contactTags'] });
+      invalidateContacts(queryClient);
+      clearSelection();
+      toast.success(
+        vars.action === 'add'
+          ? `Tag aplicada em ${result.updated} contato(s)`
+          : `Tag removida de ${result.updated} contato(s)`
+      );
+    },
+    onError: (error: Error) => toast.error(error.message || 'Erro ao atualizar tags'),
+  });
 
   // --- Handlers - memoizados para evitar re-renders ---
   const handleAddContact = useCallback((contact: { name: string; phone: string; email?: string; tags: string; custom_fields?: Record<string, any> }) => {
@@ -438,8 +556,10 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
     contacts,
     stats: statsQuery.data || { total: 0, optIn: 0, optOut: 0 },
     tags: tagsQuery.data || [],
+    lists: listsQuery.data || [],
     customFields: customFieldsQuery.data || [],
     isLoading: contactsQuery.isLoading && !contactsQuery.data,
+    isListsLoading: listsQuery.isLoading,
 
     refreshCustomFields,
 
@@ -450,6 +570,8 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
     setStatusFilter: handleStatusFilterChange,
     tagFilter,
     setTagFilter: handleTagFilterChange,
+    listFilter,
+    setListFilter: handleListFilterChange,
 
     // Pagination
     currentPage,
@@ -490,6 +612,23 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
     onImportFile: importFromFileMutation.mutateAsync,
     isImporting: importMutation.isPending || importFromFileMutation.isPending,
     isDeleting: deleteMutation.isPending || deleteManyMutation.isPending,
+
+    // Lists & tags management
+    onCreateList: (data: { name: string; color?: string }) =>
+      createListMutation.mutateAsync(data).then(() => undefined),
+    onUpdateList: (id: string, data: { name?: string; color?: string }) =>
+      updateListMutation.mutateAsync({ id, data }).then(() => undefined),
+    onDeleteList: (id: string) => deleteListMutation.mutateAsync(id).then(() => undefined),
+    onAddSelectionToList: (listId: string) =>
+      addToListMutation.mutateAsync({ listId, contactIds: Array.from(selectedIds) }).then(() => undefined),
+    onCreateTag: (tag: string) => createTagMutation.mutateAsync(tag).then(() => undefined),
+    onRenameTag: (from: string, to: string) =>
+      renameTagMutation.mutateAsync({ from, to }).then(() => undefined),
+    onDeleteTag: (tag: string) => deleteTagMutation.mutateAsync(tag).then(() => undefined),
+    onBulkTag: (tag: string, action: 'add' | 'remove') =>
+      bulkTagsMutation.mutateAsync({ tag, action }).then(() => undefined),
+    isBulkUpdating:
+      addToListMutation.isPending || bulkTagsMutation.isPending,
 
     // Import report
     importReport,

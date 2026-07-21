@@ -322,8 +322,11 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
       if (result.inserted > 0) parts.push(`${result.inserted} novos`);
       if (result.updated > 0) parts.push(`${result.updated} atualizados`);
       toast.success(`Importação concluída: ${parts.join(', ') || '0 contatos'}`);
+      if (result.rejected > 0) {
+        toast.warning(`${result.rejected} telefone(s) inválido(s) foram ignorados`);
+      }
     },
-    onError: () => toast.error('Erro ao importar contatos')
+    onError: (error: Error) => toast.error(error.message || 'Erro ao importar contatos')
   });
 
   // New: Import from file with validation report

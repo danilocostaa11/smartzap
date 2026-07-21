@@ -32,13 +32,17 @@ export const parseCSV = (content: string): { headers: string[]; rows: string[][]
 };
 
 /**
- * Format phone number for storage (adds + prefix)
- * @param phone - Raw phone number string
- * @returns Formatted phone number with + prefix
+ * Extrai só dígitos do telefone para importação CSV.
+ *
+ * NÃO prefixa "+" aqui: `+1199…` (DDD+celular sem 55) é interpretado como
+ * país +1 (EUA) pelo libphonenumber e falha na validação WhatsApp.
+ * A normalização E.164 (+55…) fica a cargo de `processPhoneNumber` no service.
+ *
+ * @param phone - Número bruto da planilha (ex: 11997793856)
+ * @returns Apenas dígitos, ou string vazia
  */
 export const formatPhoneNumber = (phone: string): string => {
-  const cleaned = phone.replace(/\D/g, '');
-  return cleaned.length > 0 ? '+' + cleaned : '';
+  return phone.replace(/\D/g, '');
 };
 
 /**

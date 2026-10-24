@@ -143,6 +143,32 @@ export interface Contact {
 }
 
 // =============================================================================
+// CONTACT LISTS (audiência estática)
+// =============================================================================
+
+export interface ContactList {
+  id: string;
+  name: string;
+  color: string;
+  description?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  memberCount?: number;
+}
+
+export interface CreateContactListDTO {
+  name: string;
+  color?: string;
+  description?: string | null;
+}
+
+export interface UpdateContactListDTO {
+  name?: string;
+  color?: string;
+  description?: string | null;
+}
+
+// =============================================================================
 // LEAD FORMS (Captação de contatos)
 // =============================================================================
 

@@ -28,6 +28,9 @@ import {
     CreateCampaignFolderDTO,
     UpdateCampaignFolderDTO,
     CreateCampaignTagDTO,
+    ContactList,
+    CreateContactListDTO,
+    UpdateContactListDTO,
 } from '../types'
 import { isSuppressionActive } from '@/lib/phone-suppressions'
 import { canonicalTemplateCategory } from '@/lib/template-category'
@@ -2345,5 +2348,193 @@ export const campaignTagDb = {
             .eq('tag_id', tagId)
 
         if (error) throw error
+    },
+}
+
+export const contactListDb = {
+    getAll: async (): Promise<ContactList[]> => {
+        const { data, error } = await supabase
+            .from('contact_lists')
+            .select('*')
+            .order('name', { ascending: true })
+
+        if (error) throw error
+
+        return (data || []).map((row: any) => ({
+            id: row.id,
+            name: row.name,
+            color: row.color,
+            description: row.description ?? null,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+        }))
+    },
+
+    getAllWithCounts: async (): Promise<ContactList[]> => {
+        const { data: lists, error: listsError } = await supabase
+            .from('contact_lists')
+            .select('*')
+            .order('name', { ascending: true })
+
+        if (listsError) throw listsError
+
+        const { data: members, error: membersError } = await supabase
+            .from('contact_list_members')
+            .select('list_id')
+
+        if (membersError) throw membersError
+
+        const countMap = new Map<string, number>()
+        ;(members || []).forEach((m: any) => {
+            if (m.list_id) {
+                countMap.set(m.list_id, (countMap.get(m.list_id) || 0) + 1)
+            }
+        })
+
+        return (lists || []).map((row: any) => ({
+            id: row.id,
+            name: row.name,
+            color: row.color,
+            description: row.description ?? null,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            memberCount: countMap.get(row.id) || 0,
+        }))
+    },
+
+    getById: async (id: string): Promise<ContactList | undefined> => {
+        const { data, error } = await supabase
+            .from('contact_lists')
+            .select('*')
+            .eq('id', id)
+            .single()
+
+        if (error || !data) return undefined
+
+        const { count, error: countError } = await supabase
+            .from('contact_list_members')
+            .select('*', { count: 'exact', head: true })
+            .eq('list_id', id)
+
+        if (countError) throw countError
+
+        return {
+            id: data.id,
+            name: data.name,
+            color: data.color,
+            description: data.description ?? null,
+            createdAt: data.created_at,
+            updatedAt: data.updated_at,
+            memberCount: count || 0,
+        }
+    },
+
+    create: async (dto: CreateContactListDTO): Promise<ContactList> => {
+        const { data, error } = await supabase
+            .from('contact_lists')
+            .insert({
+                name: dto.name.trim(),
+                color: dto.color || '#6B7280',
+                description: dto.description?.trim() || null,
+            })
+            .select()
+            .single()
+
+        if (error) throw error
+
+        return {
+            id: data.id,
+            name: data.name,
+            color: data.color,
+            description: data.description ?? null,
+            createdAt: data.created_at,
+            updatedAt: data.updated_at,
+            memberCount: 0,
+        }
+    },
+
+    update: async (id: string, dto: UpdateContactListDTO): Promise<ContactList | undefined> => {
+        const updateData: Record<string, unknown> = {}
+
+        if (dto.name !== undefined) updateData.name = dto.name.trim()
+        if (dto.color !== undefined) updateData.color = dto.color
+        if (dto.description !== undefined) {
+            updateData.description = dto.description?.trim() || null
+        }
+
+        const { error } = await supabase
+            .from('contact_lists')
+            .update(updateData)
+            .eq('id', id)
+
+        if (error) throw error
+
+        return contactListDb.getById(id)
+    },
+
+    delete: async (id: string): Promise<void> => {
+        const { error } = await supabase
+            .from('contact_lists')
+            .delete()
+            .eq('id', id)
+
+        if (error) throw error
+    },
+
+    getMemberIds: async (listId: string): Promise<string[]> => {
+        const { data, error } = await supabase
+            .from('contact_list_members')
+            .select('contact_id')
+            .eq('list_id', listId)
+
+        if (error) throw error
+
+        return (data || [])
+            .map((r: any) => String(r.contact_id || '').trim())
+            .filter(Boolean)
+    },
+
+    addMembers: async (
+        listId: string,
+        contactIds: string[]
+    ): Promise<{ added: number }> => {
+        const ids = Array.from(
+            new Set((contactIds || []).map((v) => String(v || '').trim()).filter(Boolean))
+        )
+        if (ids.length === 0) return { added: 0 }
+
+        const rows = ids.map((contactId) => ({
+            list_id: listId,
+            contact_id: contactId,
+        }))
+
+        const { data, error } = await supabase
+            .from('contact_list_members')
+            .upsert(rows, { onConflict: 'list_id,contact_id', ignoreDuplicates: true })
+            .select('contact_id')
+
+        if (error) throw error
+
+        return { added: (data || []).length }
+    },
+
+    removeMembers: async (
+        listId: string,
+        contactIds: string[]
+    ): Promise<{ removed: number }> => {
+        const ids = Array.from(
+            new Set((contactIds || []).map((v) => String(v || '').trim()).filter(Boolean))
+        )
+        if (ids.length === 0) return { removed: 0 }
+
+        const { error } = await supabase
+            .from('contact_list_members')
+            .delete()
+            .eq('list_id', listId)
+            .in('contact_id', ids)
+
+        if (error) throw error
+
+        return { removed: ids.length }
     },
 }

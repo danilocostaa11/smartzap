@@ -95,6 +95,29 @@ export const BulkSetContactCustomFieldSchema = z.object({
 })
 
 // ============================================================================
+// Contact List Schemas (listas estáticas de audiência)
+// ============================================================================
+
+export const CreateContactListSchema = z.object({
+  name: z.string().min(1, 'Nome é obrigatório').max(50, 'Nome muito longo'),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().default('#6B7280'),
+  description: z.string().max(200).optional().nullable(),
+})
+
+export const UpdateContactListSchema = z.object({
+  name: z.string().min(1).max(50).optional(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+  description: z.string().max(200).optional().nullable(),
+})
+
+export const ContactListMembersSchema = z.object({
+  contactIds: z
+    .array(z.string().min(1, 'ID inválido'))
+    .min(1, 'Selecione pelo menos um contato')
+    .max(5000, 'Máximo de 5.000 contatos por operação'),
+})
+
+// ============================================================================
 // Campaign Schemas
 // ============================================================================
 

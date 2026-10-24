@@ -1,7 +1,10 @@
 'use client'
 
+import { List } from 'lucide-react'
 import { useContactsController } from '@/hooks/useContacts'
+import { useContactListsController } from '@/hooks/useContactLists'
 import { ContactListView } from '@/components/features/contacts/ContactListView'
+import { ContactListsSheet } from '@/components/features/contacts/ContactListsSheet'
 import type { ContactsInitialData } from './actions'
 
 interface ContactsClientWrapperProps {
@@ -10,11 +13,30 @@ interface ContactsClientWrapperProps {
 
 export function ContactsClientWrapper({ initialData }: ContactsClientWrapperProps) {
   const controller = useContactsController(initialData)
+  const lists = useContactListsController()
 
   // Não mostra loading se já temos initialData do servidor
   const showLoading = controller.isLoading && !initialData
 
   return (
+    <>
+    <div className="mb-3 flex justify-end">
+      <ContactListsSheet
+        lists={lists.lists}
+        isLoading={lists.isLoading}
+        onCreate={lists.onCreate}
+        onUpdate={lists.onUpdate}
+        onDelete={lists.onDelete}
+      >
+        <button
+          type="button"
+          className="inline-flex items-center gap-2 rounded-lg border border-[var(--ds-border-default)] bg-[var(--ds-bg-elevated)] px-3 py-2 text-sm text-[var(--ds-text-secondary)] transition hover:bg-[var(--ds-bg-hover)]"
+        >
+          <List className="size-4" />
+          Listas
+        </button>
+      </ContactListsSheet>
+    </div>
     <ContactListView
       contacts={controller.contacts}
       stats={controller.stats}
@@ -60,5 +82,6 @@ export function ContactsClientWrapper({ initialData }: ContactsClientWrapperProp
       isDeleting={controller.isDeleting}
       onUnsuppress={controller.onUnsuppress}
     />
+    </>
   )
 }

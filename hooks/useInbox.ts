@@ -3,7 +3,7 @@
  * Orchestrates conversations, messages, labels, and quick replies
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useQueryClient } from '@tanstack/react-query'
 import { useConversations, useConversationMutations } from './useConversations'
@@ -47,12 +47,14 @@ export function useInbox(options: UseInboxOptions = {}) {
   )
 
   // Sync with URL params (inclui clear quando `c` some — ex.: botão voltar do browser)
+  // Só reage a MUDANÇAS do parâmetro na URL (não a seleções locais ainda não refletidas).
+  const lastUrlConversationId = useRef<string | null>(searchParams.get('c'))
   useEffect(() => {
     const urlConversationId = searchParams.get('c')
-    if (urlConversationId !== selectedId) {
-      setSelectedId(urlConversationId)
-    }
-  }, [searchParams, selectedId])
+    if (urlConversationId === lastUrlConversationId.current) return
+    lastUrlConversationId.current = urlConversationId
+    setSelectedId(urlConversationId)
+  }, [searchParams])
 
   // Conversations list
   const {

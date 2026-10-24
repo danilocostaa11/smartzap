@@ -19,7 +19,7 @@ export async function getVerifyToken(options: VerifyTokenOptions = {}): Promise<
         console.log('🔍 getVerifyToken: Checking DB...')
         const storedToken = await settingsDb.get('webhook_verify_token')
         if (storedToken) {
-            console.log('✅ getVerifyToken: Found in DB:', storedToken)
+            console.log('✅ getVerifyToken: Found in DB')
             return storedToken
         }
 
@@ -42,7 +42,7 @@ export async function getVerifyToken(options: VerifyTokenOptions = {}): Promise<
         // 4. Generate New Token (fallback to memory if DB unavailable)
         const newToken = crypto.randomUUID()
         inMemoryToken = newToken
-        console.log('🔑 getVerifyToken: Generating new:', newToken)
+        console.log('🔑 getVerifyToken: Generating new token')
         try {
             await settingsDb.set('webhook_verify_token', newToken)
         } catch (err) {

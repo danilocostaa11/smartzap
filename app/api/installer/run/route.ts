@@ -26,7 +26,13 @@ const RunSchema = z
     vercel: z.object({
       token: z.string().min(1),
       teamId: z.string().nullish().transform(val => val ?? undefined), // aceita null do JSON
-      projectId: z.string().min(1),
+      projectId: z
+        .string()
+        .min(1)
+        .refine(
+          (id) => !process.env.VERCEL_PROJECT_ID || id === process.env.VERCEL_PROJECT_ID,
+          'projectId diferente do projeto deste deploy (VERCEL_PROJECT_ID) — instalação bloqueada por segurança.'
+        ),
       targets: z.array(z.enum(['production', 'preview'])).min(1),
     }),
     supabase: z.object({

@@ -33,6 +33,7 @@ import {
   detectSupabaseRegion,
 } from '@/lib/installer/supabase';
 import type { InstallStep, InstallErrorType } from '@/lib/installer/types';
+import { resolveInstallerProject } from '@/lib/installer/project-selection';
 
 export const maxDuration = 300;
 export const runtime = 'nodejs';
@@ -160,15 +161,12 @@ async function validateVercelToken(token: string): Promise<{ projectId: string; 
   const data = await res.json();
   const projects = data.projects || [];
 
-  // Find smartzap project or use first
-  let project = projects.find((p: { name: string }) => p.name.toLowerCase().includes('smartzap'));
-  if (!project && projects.length > 0) {
-    project = projects[0];
+  // Seleção segura: VERCEL_PROJECT_ID deste deploy (nunca "outro projeto smartzap")
+  const selection = await resolveInstallerProject(token, projects);
+  if (!selection.ok) {
+    throw new Error(selection.error);
   }
-
-  if (!project) {
-    throw new Error('Nenhum projeto encontrado na Vercel. Crie um projeto primeiro.');
-  }
+  const project = selection.project;
 
   return {
     projectId: project.id,

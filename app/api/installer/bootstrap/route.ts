@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveInstallerProject } from '@/lib/installer/project-selection';
 
 /**
  * POST /api/installer/bootstrap
@@ -43,16 +44,13 @@ export async function POST(req: NextRequest) {
     const projectsData = await projectsRes.json();
     const projects = projectsData.projects || [];
 
-    // 2. Tentar detectar projeto SmartZap
-    // Prioridade: nome contém "smartzap", ou primeiro projeto encontrado
-    let detectedProject = projects.find((p: { name: string }) =>
-      p.name.toLowerCase().includes('smartzap')
-    );
-
-    // Se não encontrou por nome, pega o primeiro
-    if (!detectedProject && projects.length > 0) {
-      detectedProject = projects[0];
+    // 2. Detectar o projeto DESTE deploy (VERCEL_PROJECT_ID). Sem fallback para
+    // "primeiro projeto smartzap" em produção — evita gravar na instância errada.
+    const selection = await resolveInstallerProject(token, projects);
+    if (!selection.ok && process.env.VERCEL_PROJECT_ID) {
+      return NextResponse.json({ error: selection.error }, { status: 400 });
     }
+    const detectedProject = selection.ok ? selection.project : undefined;
 
     // 3. Se encontrou projeto, buscar mais detalhes
     if (detectedProject) {

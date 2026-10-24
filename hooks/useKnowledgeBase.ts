@@ -22,6 +22,11 @@ interface UploadFileParams {
   mime_type?: string
 }
 
+interface ImportUrlParams {
+  agent_id: string
+  url: string
+}
+
 async function listFiles(agentId: string): Promise<AIKnowledgeFile[]> {
   const response = await fetch(`/api/ai-agents/knowledge?agent_id=${agentId}`)
   if (!response.ok) {
@@ -41,6 +46,34 @@ async function uploadFile(params: UploadFileParams): Promise<AIKnowledgeFile> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({}))
     throw new Error(error.error || 'Erro ao enviar arquivo')
+  }
+  const data = await response.json()
+  return data.file
+}
+
+async function importFromUrl(params: ImportUrlParams): Promise<AIKnowledgeFile> {
+  const response = await fetch('/api/ai-agents/knowledge/from-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.error || 'Erro ao importar site')
+  }
+  const data = await response.json()
+  return data.file
+}
+
+async function reindexFile(fileId: string): Promise<AIKnowledgeFile> {
+  const response = await fetch('/api/ai-agents/knowledge/reindex', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_id: fileId }),
+  })
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.error || 'Erro ao reindexar arquivo')
   }
   const data = await response.json()
   return data.file
@@ -103,6 +136,39 @@ export function useKnowledgeBaseMutations(agentId: string | null) {
     },
   })
 
+  const importUrlMutation = useMutation({
+    mutationFn: importFromUrl,
+    onSuccess: (newFile) => {
+      if (agentId) {
+        queryClient.setQueryData<AIKnowledgeFile[]>(
+          knowledgeBaseKeys.byAgent(agentId),
+          (old) => (old ? [newFile, ...old] : [newFile])
+        )
+      }
+    },
+    onError: (error) => {
+      console.error('[useKnowledgeBase] Import URL error:', error)
+    },
+  })
+
+  const reindexMutation = useMutation({
+    mutationFn: reindexFile,
+    onSuccess: (updatedFile) => {
+      if (agentId) {
+        queryClient.setQueryData<AIKnowledgeFile[]>(
+          knowledgeBaseKeys.byAgent(agentId),
+          (old) =>
+            old
+              ? old.map((f) => (f.id === updatedFile.id ? updatedFile : f))
+              : [updatedFile]
+        )
+      }
+    },
+    onError: (error) => {
+      console.error('[useKnowledgeBase] Reindex error:', error)
+    },
+  })
+
   const deleteMutation = useMutation({
     mutationFn: deleteFile,
     onMutate: async (fileId: string) => {
@@ -149,6 +215,21 @@ export function useKnowledgeBaseMutations(agentId: string | null) {
     [agentId, uploadMutation]
   )
 
+  const onImportUrl = useCallback(
+    async (url: string) => {
+      if (!agentId) throw new Error('Agent ID is required')
+      return importUrlMutation.mutateAsync({ agent_id: agentId, url })
+    },
+    [agentId, importUrlMutation]
+  )
+
+  const onReindex = useCallback(
+    async (fileId: string) => {
+      return reindexMutation.mutateAsync(fileId)
+    },
+    [reindexMutation]
+  )
+
   const onDelete = useCallback(
     async (fileId: string) => {
       return deleteMutation.mutateAsync(fileId)
@@ -158,8 +239,12 @@ export function useKnowledgeBaseMutations(agentId: string | null) {
 
   return {
     onUpload,
+    onImportUrl,
+    onReindex,
     onDelete,
     isUploading: uploadMutation.isPending,
+    isImportingUrl: importUrlMutation.isPending,
+    isReindexing: reindexMutation.isPending,
     isDeleting: deleteMutation.isPending,
   }
 }
@@ -195,8 +280,12 @@ export function useKnowledgeBaseController(agentId: string | null) {
     refetch,
     // Mutations
     onUpload: mutations.onUpload,
+    onImportUrl: mutations.onImportUrl,
+    onReindex: mutations.onReindex,
     onDelete: mutations.onDelete,
     isUploading: mutations.isUploading,
+    isImportingUrl: mutations.isImportingUrl,
+    isReindexing: mutations.isReindexing,
     isDeleting: mutations.isDeleting,
     // Computed
     totalSize,

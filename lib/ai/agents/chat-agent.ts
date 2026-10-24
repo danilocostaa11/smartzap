@@ -26,6 +26,29 @@ import type { AIAgent, InboxConversation, InboxMessage } from '@/types'
 // This is required because static imports can cause issues when called from
 // background contexts (like debounced webhook handlers)
 
+/**
+ * Heurística: a mensagem parece uma pergunta factual que provavelmente precisa
+ * da base de conhecimento? Usada para pré-buscar RAG quando o LLM (toolChoice=auto)
+ * tende a pular a tool searchKnowledgeBase.
+ */
+function shouldPrefetchKnowledge(text: string): boolean {
+  const q = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+
+  // Saudações / respostas curtas de fluxo → sem prefetch
+  if (q.length < 12) return false
+  if (/^(oi|oie|ola|ok|sim|nao|obrigad|blz|valeu|tudo bem)\b/.test(q)) return false
+
+  // Gatilhos factuais genéricos (perguntas sobre produto, regras, preços, horários, etc.)
+  return (
+    /\b(preco|valor|quanto custa|plano|horario|funciona|endereco|localiz|regra|criterio|requisito|elegib|documenta|prazo|entrega|garantia|politica|como (funciona|faco|faz)|o que (tem|voce tem|voces tem)|quais|onde|quando)\b/.test(q) ||
+    /\b(me (passa|fala|explica|manda)|explica|detalhe|informa)\b/.test(q)
+  )
+}
+
 // =============================================================================
 // Debounce Manager
 // =============================================================================
@@ -317,6 +340,7 @@ export async function processChatAgent(
     hasIndexedContent,
     buildEmbeddingConfigFromAgent,
     buildRerankConfigFromAgent,
+    resolveEmbeddingApiKeyForAgent,
   } = await import('@/lib/ai/rag-store')
 
   // Setup message context
@@ -444,6 +468,54 @@ export async function processChatAgent(
     if (memoryContext.systemPromptAddition) {
       systemPrompt += `\n\n${memoryContext.systemPromptAddition}`
     }
+
+    // Instruções de RAG + pré-busca quando o agente tem base de conhecimento
+    if (hasKnowledgeBase) {
+      systemPrompt += `\n\n## Base de conhecimento (RAG) — OBRIGATÓRIO
+Você TEM acesso à base oficial (site + documentos) via tool \`searchKnowledgeBase\`.
+- Chame \`searchKnowledgeBase\` ANTES de responder quando o cliente perguntar sobre fatos que podem estar na base: produtos, opções, preços/valores, regras, critérios, prazos, horários, links, "como funciona", etc.
+- Fluxo esperado: \`searchKnowledgeBase\` → depois \`respond\` (isso conta como UMA resposta; não pule a busca).
+- Use os trechos encontrados (incluindo URLs) na resposta, em linguagem de WhatsApp (curta).
+- NÃO diga que "não tem acesso" se a busca retornou conteúdo útil.
+- Se a busca não achar nada útil, aí sim diga com honestidade e ofereça conectar a um atendente.`
+
+      // Pré-busca: modelos com toolChoice=auto (ex.: DeepSeek) às vezes ignoram a tool.
+      // Se a mensagem parece factual, injeta trechos já buscados para o LLM usar.
+      if (shouldPrefetchKnowledge(inputText)) {
+        try {
+          const embeddingKeyResult = await resolveEmbeddingApiKeyForAgent(agent)
+          if (embeddingKeyResult.apiKey) {
+            const embeddingConfig = buildEmbeddingConfigFromAgent(agent, embeddingKeyResult.apiKey)
+            const rerankConfig = await buildRerankConfigFromAgent(agent)
+            const prefetchHits = await findRelevantContent({
+              agentId: agent.id,
+              query: inputText,
+              embeddingConfig,
+              rerankConfig,
+              topK: agent.rag_max_results || 5,
+              threshold: Math.min(agent.rag_similarity_threshold || 0.5, 0.45),
+            })
+            if (prefetchHits.length > 0) {
+              sources = prefetchHits.map((r, i) => ({
+                title: `Fonte ${i + 1}`,
+                content: r.content.slice(0, 200) + '...',
+              }))
+              const prefetchText = prefetchHits.map((r, i) => `[${i + 1}] ${r.content}`).join('\n\n')
+              systemPrompt += `\n\n## Trechos da base (já buscados para esta mensagem)
+Use estes trechos na resposta. Se precisar refinar, ainda pode chamar \`searchKnowledgeBase\`.
+
+${prefetchText}`
+              console.log(`[chat-agent] Prefetch RAG: ${prefetchHits.length} chunks for "${inputText.slice(0, 80)}..."`)
+            } else {
+              console.log(`[chat-agent] Prefetch RAG: 0 chunks for "${inputText.slice(0, 80)}..."`)
+            }
+          }
+        } catch (prefetchError) {
+          console.error('[chat-agent] Prefetch RAG failed:', prefetchError)
+        }
+      }
+    }
+
     const responseSchema = getResponseSchema(handoffEnabled)
 
     console.log(`[chat-agent] Handoff enabled: ${handoffEnabled}`)
@@ -476,8 +548,17 @@ export async function processChatAgent(
     let searchKnowledgeBaseTool: any = undefined
 
     if (hasKnowledgeBase) {
-      searchKnowledgeBaseTool = tool({
-        description: 'Busca informações na base de conhecimento do agente. Use para responder perguntas que precisam de dados específicos.',
+      // Resolve a chave do provider de EMBEDDING (não a do LLM de chat, ex.: OpenCode Go)
+      const embeddingKeyResult = await resolveEmbeddingApiKeyForAgent(agent)
+      if (!embeddingKeyResult.apiKey) {
+        console.error(
+          `[chat-agent] Knowledge base exists but ${embeddingKeyResult.providerLabel} API key is missing — RAG tool disabled`
+        )
+      }
+
+      searchKnowledgeBaseTool = embeddingKeyResult.apiKey
+        ? tool({
+        description: 'Busca informações na base de conhecimento do agente (site + documentos indexados). Chame ANTES de responder perguntas factuais ou de dizer que não tem acesso.',
         inputSchema: z.object({
           query: z.string().describe('A pergunta ou termos de busca para encontrar informações relevantes'),
         }),
@@ -485,8 +566,8 @@ export async function processChatAgent(
           console.log(`[chat-agent] LLM requested knowledge search: "${query.slice(0, 100)}..."`)
           const ragStartTime = Date.now()
 
-          // Build configs
-          const embeddingConfig = buildEmbeddingConfigFromAgent(agent)
+          // Build configs — chave do provider de EMBEDDING, não do LLM de chat
+          const embeddingConfig = buildEmbeddingConfigFromAgent(agent, embeddingKeyResult.apiKey!)
           const rerankConfig = await buildRerankConfigFromAgent(agent)
 
           // Search
@@ -496,7 +577,8 @@ export async function processChatAgent(
             embeddingConfig,
             rerankConfig,
             topK: agent.rag_max_results || 5,
-            threshold: agent.rag_similarity_threshold || 0.5,
+            // Floor 0.45: threshold alto às vezes esconde hits úteis em sites ruidosos
+            threshold: Math.min(agent.rag_similarity_threshold || 0.5, 0.45),
           })
 
           console.log(`[chat-agent] RAG search completed in ${Date.now() - ragStartTime}ms, found ${relevantContent.length} chunks`)
@@ -523,6 +605,7 @@ export async function processChatAgent(
           }
         },
       })
+        : undefined
     }
 
     // Build tools object

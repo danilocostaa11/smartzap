@@ -97,24 +97,41 @@ const AI_GATEWAY_BASE_URL = 'https://ai-gateway.vercel.sh/v1'
  * Suporta Google e OpenAI. Voyage e Cohere não são suportados.
  */
 async function getEmbeddingModel(config: EmbeddingConfig) {
-  if (config.provider === 'google' || config.provider === 'openai') {
+  if (config.provider !== 'google' && config.provider !== 'openai') {
+    // Voyage e Cohere não são suportados — usar Google ou OpenAI
+    throw new Error(
+      `Provider "${config.provider}" não suportado para embeddings. Use Google ou OpenAI.`
+    )
+  }
+
+  // BYOK: com a chave do próprio provider de embedding, conecta direto.
+  // O Gateway exige AI_GATEWAY_API_KEY/OIDC própria; com chave vazia ele falha
+  // ("Authentication failed"), então preferimos a conexão direta quando temos a chave.
+  const gatewayKey = process.env.VERCEL_OIDC_TOKEN || process.env.AI_GATEWAY_API_KEY
+
+  if (config.apiKey) {
+    if (config.provider === 'google') {
+      const { createGoogleGenerativeAI } = await import('@ai-sdk/google')
+      const google = createGoogleGenerativeAI({ apiKey: config.apiKey })
+      console.log(`[embeddings] Direct Google model: ${config.model}`)
+      return google.textEmbeddingModel(config.model)
+    }
     const { createOpenAI } = await import('@ai-sdk/openai')
+    const openai = createOpenAI({ apiKey: config.apiKey })
+    console.log(`[embeddings] Direct OpenAI model: ${config.model}`)
+    return openai.embedding(config.model)
+  }
 
+  if (gatewayKey) {
+    const { createOpenAI } = await import('@ai-sdk/openai')
     const gatewayModelId = `${config.provider}/${config.model}`
-
-    const openai = createOpenAI({
-      apiKey: process.env.VERCEL_OIDC_TOKEN || process.env.AI_GATEWAY_API_KEY || 'dummy',
-      baseURL: AI_GATEWAY_BASE_URL,
-    })
-
+    const openai = createOpenAI({ apiKey: gatewayKey, baseURL: AI_GATEWAY_BASE_URL })
     console.log(`[embeddings] Gateway model: ${gatewayModelId}`)
-
     return openai.embedding(gatewayModelId)
   }
 
-  // Voyage e Cohere não são suportados pelo AI Gateway — usar Google ou OpenAI
   throw new Error(
-    `Provider "${config.provider}" não suportado via AI Gateway. Use Google ou OpenAI para embeddings.`
+    `Nenhuma chave de embedding disponível para ${config.provider}. Configure a API key do provider (ex.: google_api_key) ou AI_GATEWAY_API_KEY.`
   )
 }
 

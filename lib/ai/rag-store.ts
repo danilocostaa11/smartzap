@@ -265,14 +265,58 @@ export async function findRelevantContent(
 // =============================================================================
 
 /**
- * Constrói EmbeddingConfig a partir de um AIAgent
+ * Constrói EmbeddingConfig a partir de um AIAgent.
+ *
+ * `apiKey` (opcional) é a chave do provider de EMBEDDING. Quando presente, o
+ * embeddings factory usa conexão direta (BYOK) em vez do AI Gateway — isso é o
+ * que faz a busca RAG funcionar com a chave correta (ex.: Gemini), e não com a
+ * chave do LLM de chat (ex.: OpenCode Go).
  */
-export function buildEmbeddingConfigFromAgent(agent: AIAgent): EmbeddingConfig {
+export function buildEmbeddingConfigFromAgent(agent: AIAgent, apiKey?: string | null): EmbeddingConfig {
   return {
     provider: (agent.embedding_provider || 'google') as EmbeddingConfig['provider'],
     model: agent.embedding_model || 'gemini-embedding-001',
     dimensions: agent.embedding_dimensions || 768,
+    ...(apiKey ? { apiKey } : {}),
   }
+}
+
+const EMBEDDING_API_KEY_MAP: Record<
+  EmbeddingConfig['provider'],
+  { settingKeys: string[]; envVars: string[]; label: string }
+> = {
+  google: { settingKeys: ['google_api_key', 'gemini_api_key'], envVars: ['GOOGLE_GENERATIVE_AI_API_KEY', 'GEMINI_API_KEY'], label: 'Google Gemini' },
+  openai: { settingKeys: ['openai_api_key'], envVars: ['OPENAI_API_KEY'], label: 'OpenAI' },
+  voyage: { settingKeys: ['voyage_api_key'], envVars: ['VOYAGE_API_KEY'], label: 'Voyage AI' },
+  cohere: { settingKeys: ['cohere_api_key'], envVars: ['COHERE_API_KEY'], label: 'Cohere' },
+}
+
+/**
+ * Resolve a API key correta do provider de EMBEDDING do agente.
+ * Não usar a chave do LLM de chat (ex.: OpenCode) — são providers diferentes.
+ */
+export async function resolveEmbeddingApiKeyForAgent(
+  agent: AIAgent
+): Promise<{ apiKey: string | null; providerLabel: string; provider: EmbeddingConfig['provider'] }> {
+  const provider = (agent.embedding_provider || 'google') as EmbeddingConfig['provider']
+  const config = EMBEDDING_API_KEY_MAP[provider] || EMBEDDING_API_KEY_MAP.google
+  const envKey = config.envVars.map((v) => process.env[v]).find(Boolean) || null
+
+  const supabase = getSupabaseAdmin()
+  if (!supabase) {
+    return { apiKey: envKey, providerLabel: config.label, provider }
+  }
+
+  const { data: settings } = await supabase
+    .from('settings')
+    .select('key, value')
+    .in('key', config.settingKeys)
+
+  const dbKey = config.settingKeys
+    .map((k) => settings?.find((s) => s.key === k)?.value)
+    .find((v) => v && String(v).trim()) || null
+
+  return { apiKey: dbKey || envKey, providerLabel: config.label, provider }
 }
 
 /**

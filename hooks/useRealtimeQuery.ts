@@ -162,7 +162,7 @@ export function useRealtimeQuery<TData = unknown, TError = Error>({
         }
     // events.join(',') é intencional: serializa o array para comparação estável,
     // evitando re-subscriptions quando o array é recriado com os mesmos valores.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // (react-hooks/exhaustive-deps não está habilitado no eslint deste repo)
     }, [table, filter, events.join(','), handleRealtimeEvent])
 
     return query

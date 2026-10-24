@@ -308,11 +308,19 @@ async function triggerAIProcessing(
   }
 
   // 3. Atualiza timestamp da ÚLTIMA MENSAGEM no Redis (isso é o "reset" do timer)
+  // Fail-open: Redis morto/DNS inválido NÃO pode impedir o QStash de disparar a IA
   const redisKey = `ai:lastmsg:${conversationId}`
   if (redis) {
-    // Expira a chave alguns segundos após o delay para limpeza automática
-    await redis.set(redisKey, now, { ex: debounceSeconds + 30 })
-    console.log(`🔥 [TRIGGER] Redis SET ${redisKey} = ${now} (última mensagem)`)
+    try {
+      // Expira a chave alguns segundos após o delay para limpeza automática
+      await redis.set(redisKey, now, { ex: debounceSeconds + 30 })
+      console.log(`🔥 [TRIGGER] Redis SET ${redisKey} = ${now} (última mensagem)`)
+    } catch (redisError) {
+      console.warn(
+        `⚠️ [TRIGGER] Redis SET failed (continuing without debounce reset):`,
+        redisError instanceof Error ? redisError.message : redisError
+      )
+    }
   } else {
     console.log(`⚠️ [TRIGGER] Redis not configured, debounce will be best-effort`)
   }

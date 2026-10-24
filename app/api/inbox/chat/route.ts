@@ -290,8 +290,8 @@ export async function POST(req: Request) {
           },
         }),
       },
-      // Force the model to use the respond tool
-      toolChoice: 'required',
+      // OpenCode Go / DeepSeek falha com tool_choice=required; 'auto' ainda usa a tool respond.
+      toolChoice: 'auto',
       temperature: 0.7,
       maxOutputTokens: 2048,
     })

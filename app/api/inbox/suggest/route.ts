@@ -200,7 +200,8 @@ export async function POST(req: Request) {
           },
         }),
       },
-      toolChoice: 'required',
+      // OpenCode Go / DeepSeek falha com tool_choice=required; 'auto' ainda usa a tool.
+      toolChoice: 'auto',
       temperature: 0.7,
       maxOutputTokens: 1024,
     })

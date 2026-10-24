@@ -79,6 +79,7 @@ metadata.json
 # exceções pontuais. Por isso usamos scripts/* e liberamos explicitamente o arquivo.
 scripts/*
 !scripts/meta-audit.mjs
+!scripts/nova-instancia.sh
 
 # OS
 .DS_Store
@@ -126,7 +127,8 @@ research.md
 PRD-campaigns-new.md
 
 # Docs (dev-only, kept locally) - /docs/ ignora apenas na raiz
-/docs/
+/docs/*
+!/docs/nova-instancia-por-numero.md
 .env*.local
 
 # Audit reports e arquivos de teste local

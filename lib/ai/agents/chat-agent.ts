@@ -470,6 +470,14 @@ export async function processChatAgent(
       systemPrompt += `\n\n${memoryContext.systemPromptAddition}`
     }
 
+    // Obrigatório: a resposta final ao cliente SÓ vale se passar pela tool respond.
+    // Modelos com toolChoice=auto às vezes respondem em texto puro após RAG.
+    systemPrompt += `\n\n## Formato de saída (obrigatório)
+- Toda resposta final ao cliente DEVE ser enviada pela tool \`respond\`.
+- Nunca responda só em texto livre: sempre chame \`respond\` com o campo \`message\`.
+- Se usar outras tools (busca, reação, etc.), chame \`respond\` em seguida com a resposta final.
+- Se não souber algo, ainda assim chame \`respond\` com uma resposta honesta e útil.`
+
     // Instruções de RAG + pré-busca quando o agente tem base de conhecimento
     if (hasKnowledgeBase) {
       systemPrompt += `\n\n## Base de conhecimento (RAG) — OBRIGATÓRIO
@@ -784,8 +792,8 @@ ${prefetchText}`
           // 'auto' ainda chama respond via system prompt + schema das tools; o retry loop
           // abaixo cobre o caso raro de o LLM devolver texto sem chamar a tool.
           toolChoice: 'auto',
-          // Para quando respond for chamado OU após 3 steps (o que vier primeiro)
-          stopWhen: (event) => stopCondition() || stepCountIs(3)(event),
+          // Para quando respond for chamado OU após 5 steps (busca/reação + respond)
+          stopWhen: (event) => stopCondition() || stepCountIs(5)(event),
           temperature: agent.temperature ?? DEFAULT_TEMPERATURE,
           maxOutputTokens: agent.max_tokens ?? DEFAULT_MAX_TOKENS,
           abortSignal: abortController.signal,

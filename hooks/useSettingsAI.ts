@@ -92,7 +92,7 @@ export const useSettingsAIController = () => {
     try {
       const data = (await settingsService.getAIConfig()) as AIConfigResponse
       const nextProvider: AiProviderType =
-        data.provider === 'openai' ? 'openai' : 'google'
+        data.provider === 'openai' || data.provider === 'opencode_go' ? data.provider : 'google'
       const nextModel = data.model?.trim() ? data.model : DEFAULT_MODEL_ID
 
       setProvider(nextProvider)

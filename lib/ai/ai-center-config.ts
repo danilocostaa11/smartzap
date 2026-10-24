@@ -15,6 +15,7 @@ const SETTINGS_KEYS = {
   prompts: 'ai_prompts',
   googleApiKey: 'google_api_key',
   openaiApiKey: 'openai_api_key',
+  opencodeGoApiKey: 'opencode_go_api_key',
   // Chaves individuais para prompts de estratégia (fonte única de verdade: banco)
   strategyMarketing: 'strategyMarketing',
   strategyUtility: 'strategyUtility',
@@ -48,9 +49,10 @@ function normalizeDirect(
   input?: Partial<Pick<AiDirectConfig, 'provider' | 'model'>> | null,
   googleApiKey?: string | null,
   openaiApiKey?: string | null,
+  opencodeGoApiKey?: string | null,
 ): AiDirectConfig {
   const provider: AiProviderType =
-    input?.provider === 'google' || input?.provider === 'openai'
+    input?.provider === 'google' || input?.provider === 'openai' || input?.provider === 'opencode_go'
       ? input.provider
       : DEFAULT_AI_DIRECT.provider
 
@@ -64,6 +66,7 @@ function normalizeDirect(
     model,
     ...(googleApiKey ? { googleApiKey } : {}),
     ...(openaiApiKey ? { openaiApiKey } : {}),
+    ...(opencodeGoApiKey ? { opencodeGoApiKey } : {}),
   }
 }
 
@@ -134,15 +137,22 @@ export async function getAiRoutesConfig(): Promise<AiRoutesConfig> {
 export async function getAiDirectConfig(): Promise<AiDirectConfig> {
   if (cachedDirect && isCacheValid()) return cachedDirect
 
-  const [rawDirect, googleApiKey, geminiApiKeyLegacy, openaiApiKey] = await Promise.all([
+  const [rawDirect, googleApiKey, geminiApiKeyLegacy, openaiApiKey, opencodeGoApiKey] = await Promise.all([
     getSettingValue(SETTINGS_KEYS.direct),
     getSettingValue(SETTINGS_KEYS.googleApiKey),
     getSettingValue('gemini_api_key'), // retrocompatibilidade: chave pode estar salva com nome antigo
     getSettingValue(SETTINGS_KEYS.openaiApiKey),
+    getSettingValue(SETTINGS_KEYS.opencodeGoApiKey),
   ])
 
   const parsed = parseJsonSetting<Partial<Pick<AiDirectConfig, 'provider' | 'model'>>>(rawDirect, {})
-  cachedDirect = normalizeDirect(parsed, googleApiKey || geminiApiKeyLegacy, openaiApiKey)
+  cachedDirect = normalizeDirect(
+    parsed,
+    googleApiKey || geminiApiKeyLegacy,
+    openaiApiKey,
+    // env fallback: OPENCODE_GO_API_KEY
+    opencodeGoApiKey || process.env.OPENCODE_GO_API_KEY || null,
+  )
   cacheTime = Date.now()
   return cachedDirect
 }

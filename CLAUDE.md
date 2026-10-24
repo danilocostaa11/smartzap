@@ -253,6 +253,8 @@ Required:
 Optional:
 - `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_BUSINESS_ACCOUNT_ID` (fallback if not in DB)
 - `GOOGLE_GENERATIVE_AI_API_KEY` (AI features — canonical name per `@ai-sdk/google`; `GEMINI_API_KEY` accepted as alias)
+- `OPENCODE_GO_API_KEY` (provider OpenCode Go — fallback da setting `opencode_go_api_key`)
+- `OPENCODE_GO_BASE_URL` (base URL OpenAI-compatible do OpenCode Go; padrão `https://opencode.ai/zen/go/v1`)
 - `MEM0_API_KEY` (conversation memory)
 - `SETUP_COMPLETE=true` (produção — pula consulta ao banco em `isSetupComplete()`, evitando queries desnecessárias)
 

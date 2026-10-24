@@ -11,7 +11,7 @@ export type AiRoutesConfig = {
 }
 
 /** Provider de IA suportado pelo SmartZap. */
-export type AiProviderType = 'google' | 'openai'
+export type AiProviderType = 'google' | 'openai' | 'opencode_go'
 
 /**
  * Configuração de provider direto.
@@ -28,6 +28,8 @@ export type AiDirectConfig = {
   googleApiKey?: string
   /** Chave API da OpenAI (lida do Supabase). */
   openaiApiKey?: string
+  /** Chave API do OpenCode Go (gateway OpenAI-compatible). */
+  opencodeGoApiKey?: string
 }
 
 export type AiPromptsConfig = {

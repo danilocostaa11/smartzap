@@ -79,6 +79,7 @@ export async function GET() {
         'ai_direct',
         'google_api_key',
         'openai_api_key',
+        'opencode_go_api_key',
         'ai_routes',
         'ai_prompts',
         'ocr_gemini_model',
@@ -111,6 +112,7 @@ export async function GET() {
 
     const googleApiKey = (settingsMap.get('google_api_key') as string) || ''
     const openaiApiKey = (settingsMap.get('openai_api_key') as string) || ''
+    const opencodeGoApiKey = (settingsMap.get('opencode_go_api_key') as string) || ''
     const ocrGeminiModel = (settingsMap.get('ocr_gemini_model') as string) || DEFAULT_OCR_MODEL
 
     return NextResponse.json({
@@ -128,6 +130,11 @@ export async function GET() {
           isConfigured: !!openaiApiKey,
           source: openaiApiKey ? 'database' : 'none',
           tokenPreview: openaiApiKey ? getPreview(openaiApiKey) : null,
+        },
+        opencode_go: {
+          isConfigured: !!opencodeGoApiKey,
+          source: opencodeGoApiKey ? 'database' : 'none',
+          tokenPreview: opencodeGoApiKey ? getPreview(opencodeGoApiKey) : null,
         },
       },
       ocr: {
@@ -153,12 +160,13 @@ export async function POST(request: NextRequest) {
       model,
       google_api_key,
       openai_api_key,
+      opencode_go_api_key,
       routes,
       prompts,
       ocr_gemini_model,
     } = body
 
-    if (!provider && !model && !google_api_key && !openai_api_key && !routes && !prompts && !ocr_gemini_model) {
+    if (!provider && !model && !google_api_key && !openai_api_key && !opencode_go_api_key && !routes && !prompts && !ocr_gemini_model) {
       return NextResponse.json({ error: 'At least one field is required' }, { status: 400 })
     }
 
@@ -191,6 +199,12 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: result.error }, { status: 400 })
       }
       updates.push({ key: 'openai_api_key', value: openai_api_key, updated_at: now })
+    }
+
+    // Salva chave OpenCode Go (gateway OpenAI-compatible; sem validação remota —
+    // o endpoint só expõe /chat/completions, não há lista de modelos para checar).
+    if (opencode_go_api_key) {
+      updates.push({ key: 'opencode_go_api_key', value: opencode_go_api_key, updated_at: now })
     }
 
     // Rotas de IA
@@ -261,14 +275,17 @@ export async function DELETE(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const provider = searchParams.get('provider')
 
-    if (provider !== 'google' && provider !== 'openai') {
+    if (provider !== 'google' && provider !== 'openai' && provider !== 'opencode_go') {
       return NextResponse.json(
-        { error: 'Provider inválido. Use "google" ou "openai".' },
+        { error: 'Provider inválido. Use "google", "openai" ou "opencode_go".' },
         { status: 400 }
       )
     }
 
-    const keyName = provider === 'google' ? 'google_api_key' : 'openai_api_key'
+    const keyName =
+      provider === 'google' ? 'google_api_key'
+      : provider === 'openai' ? 'openai_api_key'
+      : 'opencode_go_api_key'
 
     const { error } = await supabase.admin
       ?.from('settings')

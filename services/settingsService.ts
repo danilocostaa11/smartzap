@@ -281,7 +281,7 @@ export const settingsService = {
   /**
    * Remove API key for a specific provider
    */
-  removeAIKey: async (provider: 'google' | 'openai') => {
+  removeAIKey: async (provider: 'google' | 'openai' | 'opencode_go') => {
     const response = await fetch(`/api/settings/ai?provider=${provider}`, {
       method: 'DELETE',
     });

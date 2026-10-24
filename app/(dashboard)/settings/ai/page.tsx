@@ -149,6 +149,10 @@ const API_KEY_URLS: Record<AIProvider, { url: string; label: string }> = {
     url: 'https://platform.openai.com/api-keys',
     label: 'OpenAI Platform',
   },
+  opencode_go: {
+    url: 'https://opencode.ai/docs/zen/',
+    label: 'OpenCode Go (Zen)',
+  },
 }
 
 // Componente de card de estratégia com design distintivo
@@ -598,8 +602,8 @@ export default function AICenterPage() {
 
           <div className="mt-5 space-y-4">
             {/* Provider selector */}
-            <div className="flex gap-3">
-              {(['google', 'openai'] as const).map((p) => (
+            <div className="flex flex-wrap gap-3">
+              {(['google', 'openai', 'opencode_go'] as const).map((p) => (
                 <button
                   key={p}
                   type="button"
@@ -610,7 +614,7 @@ export default function AICenterPage() {
                       : 'border-[var(--ds-border-default)] bg-[var(--ds-bg-elevated)] text-[var(--ds-text-secondary)] hover:bg-[var(--ds-bg-hover)]'
                   }`}
                 >
-                  {p === 'google' ? '✨ Google Gemini' : '⚡ OpenAI'}
+                  {p === 'google' ? '✨ Google Gemini' : p === 'openai' ? '⚡ OpenAI' : '🚀 OpenCode Go'}
                 </button>
               ))}
             </div>

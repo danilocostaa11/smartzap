@@ -16,7 +16,20 @@ import type { AIModelInfo } from '@/app/api/ai/models/route';
 // TIPOS
 // =============================================================================
 
-type AiProvider = 'google' | 'openai';
+type AiProvider = 'google' | 'openai' | 'opencode_go';
+
+const PROVIDER_LABELS: Record<AiProvider, string> = {
+  google: 'Google',
+  openai: 'OpenAI',
+  opencode_go: 'OpenCode Go',
+};
+
+/** Monta o body de POST /api/settings/ai para salvar a chave do provider. */
+function keyBody(id: AiProvider, key: string): Record<string, string> {
+  if (id === 'google') return { google_api_key: key };
+  if (id === 'opencode_go') return { opencode_go_api_key: key };
+  return { openai_api_key: key };
+}
 
 type KeyStatus = 'idle' | 'saving' | 'valid' | 'invalid';
 
@@ -51,16 +64,25 @@ const PROVIDERS: { id: AiProvider; label: string; icon: string; color: string; p
     color: 'emerald',
     placeholder: 'sk-...',
   },
+  {
+    id: 'opencode_go',
+    label: 'OpenCode Go',
+    icon: '🚀',
+    color: 'violet',
+    placeholder: 'sk-... (OpenCode Go / Zen)',
+  },
 ];
 
 const COLOR_MAP: Record<string, string> = {
   blue: 'border-blue-500/40 bg-blue-500/10 text-blue-300',
   emerald: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
+  violet: 'border-violet-500/40 bg-violet-500/10 text-violet-300',
 };
 
 const ACTIVE_COLOR: Record<string, string> = {
   blue: 'border-blue-500/50 bg-blue-500/20 ring-1 ring-blue-500/30',
   emerald: 'border-emerald-500/50 bg-emerald-500/20 ring-1 ring-emerald-500/30',
+  violet: 'border-violet-500/50 bg-violet-500/20 ring-1 ring-violet-500/30',
 };
 
 // =============================================================================
@@ -80,6 +102,11 @@ export function AIGatewayPanel() {
       modelSearch: '', showModelList: false,
     },
     openai: {
+      isConfigured: false, tokenPreview: null, keyStatus: 'idle',
+      keyDraft: '', showKey: false, models: [], modelsLoading: false,
+      modelSearch: '', showModelList: false,
+    },
+    opencode_go: {
       isConfigured: false, tokenPreview: null, keyStatus: 'idle',
       keyDraft: '', showKey: false, models: [], modelsLoading: false,
       modelSearch: '', showModelList: false,
@@ -113,6 +140,12 @@ export function AIGatewayPanel() {
         updateProvider('openai', {
           isConfigured: data.keys.openai.isConfigured,
           tokenPreview: data.keys.openai.tokenPreview,
+        });
+      }
+      if (data.keys?.opencode_go) {
+        updateProvider('opencode_go', {
+          isConfigured: data.keys.opencode_go.isConfigured,
+          tokenPreview: data.keys.opencode_go.tokenPreview,
         });
       }
     } catch (error) {
@@ -151,17 +184,16 @@ export function AIGatewayPanel() {
 
     updateProvider(id, { keyStatus: 'saving' });
     try {
-      const body = id === 'google' ? { google_api_key: key } : { openai_api_key: key };
       const res = await fetch('/api/settings/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(keyBody(id, key)),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erro ao salvar');
 
       updateProvider(id, { keyStatus: 'valid', keyDraft: '', isConfigured: true });
-      toast.success(`Chave ${id === 'google' ? 'Google' : 'OpenAI'} salva`);
+      toast.success(`Chave ${PROVIDER_LABELS[id]} salva`);
       await loadConfig();
       // Carrega modelos com a nova chave
       void fetchModels(id);
@@ -177,7 +209,7 @@ export function AIGatewayPanel() {
       const res = await fetch(`/api/settings/ai?provider=${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Erro ao remover chave');
       updateProvider(id, { isConfigured: false, tokenPreview: null, models: [], keyStatus: 'idle' });
-      toast.success(`Chave ${id === 'google' ? 'Google' : 'OpenAI'} removida`);
+      toast.success(`Chave ${PROVIDER_LABELS[id]} removida`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro ao remover chave';
       toast.error(message);
@@ -217,7 +249,7 @@ export function AIGatewayPanel() {
       if (!res.ok) throw new Error('Erro ao salvar provider');
       setActiveProvider(id);
       setActiveModel('');
-      toast.success(`Provider alterado para ${id === 'google' ? 'Google' : 'OpenAI'}`);
+      toast.success(`Provider alterado para ${PROVIDER_LABELS[id]}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro ao salvar provider';
       toast.error(message);

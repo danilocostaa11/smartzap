@@ -19,6 +19,7 @@ import { z } from 'zod'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { DEFAULT_MODEL_ID } from '@/lib/ai/model'
 import { getAiDirectConfig } from '@/lib/ai/ai-center-config'
+import { resolveOpenCodeGoBaseUrl } from '@/lib/ai/providers'
 import type { AIAgent, InboxConversation, InboxMessage } from '@/types'
 
 // NOTE: AI dependencies are imported DYNAMICALLY inside processChatAgent
@@ -351,9 +352,9 @@ export async function processChatAgent(
     mem0Enabled = false
   }
 
-  // Obter configuração de provider direto (Google / OpenAI)
+  // Obter configuração de provider direto (Google / OpenAI / OpenCode Go)
   const directConfig = await getAiDirectConfig()
-  if (!directConfig.googleApiKey && !directConfig.openaiApiKey) {
+  if (!directConfig.googleApiKey && !directConfig.openaiApiKey && !directConfig.opencodeGoApiKey) {
     return {
       success: false,
       error: 'Nenhuma chave de API configurada. Acesse Configurações → IA.',
@@ -363,18 +364,28 @@ export async function processChatAgent(
 
   const modelId = agent.model || directConfig.model || DEFAULT_MODEL_ID
 
-  // Criar instância do modelo com a chave do usuário
+  // Criar instância do modelo com a chave do usuário.
+  // O provider é SEMPRE explícito (directConfig.provider) — não há detecção por id
+  // de modelo, então `claude-haiku-5-5` via OpenCode Go vai para o OpenCode Go.
   let rawModel
-  if (directConfig.provider === 'openai' && directConfig.openaiApiKey) {
+  if (directConfig.provider === 'opencode_go' && directConfig.opencodeGoApiKey) {
+    // Gateway OpenAI-compatible — SEMPRE Chat Completions (.chat), nunca Responses API.
+    const opencode = createOpenAI({ apiKey: directConfig.opencodeGoApiKey, baseURL: resolveOpenCodeGoBaseUrl() })
+    rawModel = opencode.chat(modelId)
+  } else if (directConfig.provider === 'openai' && directConfig.openaiApiKey) {
     const openai = createOpenAI({ apiKey: directConfig.openaiApiKey })
     rawModel = openai(modelId)
   } else if (directConfig.googleApiKey) {
     const google = createGoogleGenerativeAI({ apiKey: directConfig.googleApiKey })
     rawModel = google(modelId)
   } else {
+    const providerLabel =
+      directConfig.provider === 'opencode_go' ? 'OpenCode Go'
+      : directConfig.provider === 'openai' ? 'OpenAI'
+      : 'Google'
     return {
       success: false,
-      error: `Chave ${directConfig.provider === 'openai' ? 'OpenAI' : 'Google'} não configurada. Acesse Configurações → IA.`,
+      error: `Chave ${providerLabel} não configurada. Acesse Configurações → IA.`,
       latencyMs: Date.now() - startTime,
     }
   }

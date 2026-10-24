@@ -15,6 +15,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 
 import { getAiDirectConfig } from './ai-center-config'
 import type { AiDirectConfig } from './ai-center-defaults'
+import { resolveOpenCodeGoBaseUrl } from './providers'
 
 // =============================================================================
 // TYPES
@@ -70,6 +71,15 @@ function createModelInstance(config: AiDirectConfig, modelOverride?: string) {
         }
         const google = createGoogleGenerativeAI({ apiKey: config.googleApiKey })
         return google(modelId)
+    }
+
+    if (config.provider === 'opencode_go') {
+        if (!config.opencodeGoApiKey) {
+            throw new Error('Chave OpenCode Go não configurada. Acesse Configurações → IA e insira sua OpenCode Go API Key.')
+        }
+        // OpenCode Go é gateway OpenAI-compatible — SEMPRE Chat Completions (.chat), nunca Responses API.
+        const opencode = createOpenAI({ apiKey: config.opencodeGoApiKey, baseURL: resolveOpenCodeGoBaseUrl() })
+        return opencode.chat(modelId)
     }
 
     if (!config.openaiApiKey) {

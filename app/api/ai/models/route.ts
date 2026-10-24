@@ -1,12 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { AI_PROVIDERS } from '@/lib/ai/providers'
 
 export interface AIModelInfo {
   id: string
   name: string
-  provider: 'google' | 'openai'
+  provider: 'google' | 'openai' | 'opencode_go'
   /** true = alias auto-atualizado (ex: gemini-flash-latest) */
   isAlias: boolean
+}
+
+/** OpenCode Go não tem endpoint de listagem — usa o catálogo estático. */
+function getOpenCodeGoModels(): AIModelInfo[] {
+  const provider = AI_PROVIDERS.find((p) => p.id === 'opencode_go')
+  return (provider?.models ?? []).map((m) => ({
+    id: m.id,
+    name: m.name,
+    provider: 'opencode_go' as const,
+    isAlias: false,
+  }))
 }
 
 // Padrões de modelos a excluir do fetch do Google
@@ -120,11 +132,16 @@ async function fetchOpenAIModels(apiKey: string): Promise<AIModelInfo[]> {
 export async function GET(request: NextRequest) {
   const provider = new URL(request.url).searchParams.get('provider')
 
-  if (provider !== 'google' && provider !== 'openai') {
+  if (provider !== 'google' && provider !== 'openai' && provider !== 'opencode_go') {
     return NextResponse.json(
-      { error: 'Parâmetro "provider" inválido. Use "google" ou "openai".' },
+      { error: 'Parâmetro "provider" inválido. Use "google", "openai" ou "opencode_go".' },
       { status: 400 }
     )
+  }
+
+  // OpenCode Go: catálogo estático (não depende de chave para listar).
+  if (provider === 'opencode_go') {
+    return NextResponse.json({ models: getOpenCodeGoModels() })
   }
 
   const keyName = provider === 'google' ? 'google_api_key' : 'openai_api_key'

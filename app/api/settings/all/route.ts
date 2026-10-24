@@ -187,7 +187,7 @@ async function fetchAISettings(): Promise<AISettingsData> {
     ?.from('settings')
     .select('key, value')
     .in('key', [
-      'ai_direct', 'google_api_key', 'openai_api_key',
+      'ai_direct', 'google_api_key', 'openai_api_key', 'opencode_go_api_key',
       'ai_routes', 'ai_prompts',
     ]) || { data: null }
 
@@ -199,8 +199,14 @@ async function fetchAISettings(): Promise<AISettingsData> {
 
   const googleKey = (settingsMap.get('google_api_key') as string) || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GEMINI_API_KEY || ''
   const openaiKey = (settingsMap.get('openai_api_key') as string) || process.env.OPENAI_API_KEY || ''
+  const opencodeGoKey = (settingsMap.get('opencode_go_api_key') as string) || process.env.OPENCODE_GO_API_KEY || ''
 
   const getPreview = (key: string) => key ? `${key.substring(0, 4)}...${key.substring(key.length - 4)}` : null
+
+  const providerKey = (p: string) =>
+    p === 'google' ? googleKey : p === 'opencode_go' ? opencodeGoKey : openaiKey
+  const providerSettingKey = (p: string) =>
+    p === 'google' ? 'google_api_key' : p === 'opencode_go' ? 'opencode_go_api_key' : 'openai_api_key'
 
   return {
     provider: savedProvider,
@@ -216,12 +222,15 @@ async function fetchAISettings(): Promise<AISettingsData> {
         source: settingsMap.get('openai_api_key') ? 'database' : (openaiKey ? 'env' : 'none'),
         tokenPreview: getPreview(openaiKey),
       },
+      opencode_go: {
+        isConfigured: !!opencodeGoKey,
+        source: settingsMap.get('opencode_go_api_key') ? 'database' : (opencodeGoKey ? 'env' : 'none'),
+        tokenPreview: getPreview(opencodeGoKey),
+      },
     },
-    isConfigured: savedProvider === 'google' ? !!googleKey : !!openaiKey,
-    source: savedProvider === 'google'
-      ? (settingsMap.get('google_api_key') ? 'database' : (googleKey ? 'env' : 'none'))
-      : (settingsMap.get('openai_api_key') ? 'database' : (openaiKey ? 'env' : 'none')),
-    tokenPreview: savedProvider === 'google' ? getPreview(googleKey) : getPreview(openaiKey),
+    isConfigured: !!providerKey(savedProvider),
+    source: settingsMap.get(providerSettingKey(savedProvider)) ? 'database' : (providerKey(savedProvider) ? 'env' : 'none'),
+    tokenPreview: getPreview(providerKey(savedProvider)),
     routes: prepareAiRoutesUpdate(parseJsonSetting(settingsMap.get('ai_routes') as string | null, DEFAULT_AI_ROUTES)),
     prompts: prepareAiPromptsUpdate(parseJsonSetting(settingsMap.get('ai_prompts') as string | null, DEFAULT_AI_PROMPTS)),
   }

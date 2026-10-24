@@ -17,6 +17,8 @@ import { processChatAgent, type ContactContext } from '@/lib/ai/agents/chat-agen
 import { sendWhatsAppMessage, sendTypingIndicator } from '@/lib/whatsapp-send'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { redis } from '@/lib/redis'
+import { unauthorizedResponse } from '@/lib/auth'
+import { verifyQStashOrApiKey } from '@/lib/qstash-request-auth'
 import type { AIAgent } from '@/types'
 
 // Fluid Compute: 5 minutos de timeout (suficiente para IA)
@@ -48,8 +50,15 @@ export async function POST(req: NextRequest) {
   console.log(`🤖 [AI-RESPOND] Request received at ${new Date().toISOString()}`)
 
   try {
+    const rawBody = await req.text()
+    const auth = await verifyQStashOrApiKey(req, rawBody)
+    if (!auth.valid) {
+      console.log(`❌ [AI-RESPOND] Unauthorized: ${auth.error}`)
+      return unauthorizedResponse(auth.error)
+    }
+
     // 1. Parse request
-    const body = (await req.json()) as AIRespondRequest
+    const body = JSON.parse(rawBody) as AIRespondRequest
     const { conversationId, debounceMs, messageId } = body
 
     if (!conversationId) {
@@ -61,47 +70,63 @@ export async function POST(req: NextRequest) {
 
     // 1.2. DEDUPLICAÇÃO: Verifica se essa mensagem já foi processada
     // Última linha de defesa contra duplicatas (QStash retry, race conditions, etc.)
+    // Fail-open: se o Redis estiver fora (DNS/rede), não bloqueia a resposta da IA.
     if (messageId && redis) {
-      const dedupKey = `ai:processed:${messageId}`
-      const alreadyProcessed = await redis.get(dedupKey)
+      try {
+        const dedupKey = `ai:processed:${messageId}`
+        const alreadyProcessed = await redis.get(dedupKey)
 
-      if (alreadyProcessed) {
-        console.log(`⏭️ [AI-RESPOND] Duplicate detected - message ${messageId} already processed at ${alreadyProcessed}`)
-        return NextResponse.json({
-          success: true,
-          deduplicated: true,
-          messageId,
-          reason: 'already-processed',
-        })
+        if (alreadyProcessed) {
+          console.log(`⏭️ [AI-RESPOND] Duplicate detected - message ${messageId} already processed at ${alreadyProcessed}`)
+          return NextResponse.json({
+            success: true,
+            deduplicated: true,
+            messageId,
+            reason: 'already-processed',
+          })
+        }
+
+        // Marca como "processando" ANTES de iniciar (evita race condition)
+        // TTL de 30 minutos - tempo suficiente para qualquer processamento
+        await redis.setex(dedupKey, 1800, new Date().toISOString())
+        console.log(`🔒 [AI-RESPOND] Dedup lock acquired for message ${messageId}`)
+      } catch (redisError) {
+        console.warn(
+          `⚠️ [AI-RESPOND] Redis dedup check failed (processing anyway):`,
+          redisError instanceof Error ? redisError.message : redisError
+        )
       }
-
-      // Marca como "processando" ANTES de iniciar (evita race condition)
-      // TTL de 30 minutos - tempo suficiente para qualquer processamento
-      await redis.setex(dedupKey, 1800, new Date().toISOString())
-      console.log(`🔒 [AI-RESPOND] Dedup lock acquired for message ${messageId}`)
     }
 
     // 1.5. Verificação de debounce - usuário parou de digitar?
     // Verifica se passou tempo suficiente desde a ÚLTIMA MENSAGEM
+    // Fail-open: se Redis estiver fora (DNS/rede), processa mesmo assim
     if (debounceMs && debounceMs > 0 && redis) {
-      const redisKey = `ai:lastmsg:${conversationId}`
-      const lastMsgTimestamp = await redis.get<number>(redisKey)
+      try {
+        const redisKey = `ai:lastmsg:${conversationId}`
+        const lastMsgTimestamp = await redis.get<number>(redisKey)
 
-      if (lastMsgTimestamp) {
-        const now = Date.now()
-        const timeSinceLastMsg = now - lastMsgTimestamp
+        if (lastMsgTimestamp) {
+          const now = Date.now()
+          const timeSinceLastMsg = now - lastMsgTimestamp
 
-        // Se não passou tempo suficiente, usuário ainda está digitando
-        // Outro job (mais recente) vai processar
-        if (timeSinceLastMsg < debounceMs) {
-          console.log(`⏭️ [AI-RESPOND] Skipping - user still typing (${timeSinceLastMsg}ms < ${debounceMs}ms)`)
-          return NextResponse.json({ skipped: true, reason: 'user-still-typing' })
+          // Se não passou tempo suficiente, usuário ainda está digitando
+          // Outro job (mais recente) vai processar
+          if (timeSinceLastMsg < debounceMs) {
+            console.log(`⏭️ [AI-RESPOND] Skipping - user still typing (${timeSinceLastMsg}ms < ${debounceMs}ms)`)
+            return NextResponse.json({ skipped: true, reason: 'user-still-typing' })
+          }
+
+          // Passou tempo suficiente - usuário parou de digitar
+          // Limpa a chave e processa
+          await redis.del(redisKey)
+          console.log(`🤖 [AI-RESPOND] User stopped typing (${timeSinceLastMsg}ms >= ${debounceMs}ms) - processing`)
         }
-
-        // Passou tempo suficiente - usuário parou de digitar
-        // Limpa a chave e processa
-        await redis.del(redisKey)
-        console.log(`🤖 [AI-RESPOND] User stopped typing (${timeSinceLastMsg}ms >= ${debounceMs}ms) - processing`)
+      } catch (redisError) {
+        console.warn(
+          `⚠️ [AI-RESPOND] Redis debounce check failed (processing anyway):`,
+          redisError instanceof Error ? redisError.message : redisError
+        )
       }
     }
 

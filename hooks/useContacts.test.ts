@@ -226,7 +226,7 @@ describe('useContactsController', () => {
 
   describe('paginação', () => {
     it('deve calcular totalPages', async () => {
-      mockList.mockResolvedValue({ data: mockContacts, total: 25 })
+      mockList.mockResolvedValue({ data: mockContacts, total: 120 })
 
       const { result } = renderHookWithProviders(() => useContactsController())
 
@@ -234,7 +234,7 @@ describe('useContactsController', () => {
         expect(result.current.isLoading).toBe(false)
       })
 
-      // 25 items / 10 per page = 3 pages
+      // 120 items / 50 per page (default) = 3 pages
       expect(result.current.totalPages).toBe(3)
     })
 
@@ -252,7 +252,7 @@ describe('useContactsController', () => {
 
     it('deve expor itemsPerPage', () => {
       const { result } = renderHookWithProviders(() => useContactsController())
-      expect(result.current.itemsPerPage).toBe(10)
+      expect(result.current.itemsPerPage).toBe(50)
     })
   })
 

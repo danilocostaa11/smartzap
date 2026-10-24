@@ -20,6 +20,7 @@ import type { ContactsInitialData } from '@/app/(dashboard)/contacts/actions';
 
 interface ContactsQueryParams {
   page: number
+  pageSize: number
   search: string
   status: ContactStatus | 'ALL' | 'SUPPRESSED'
   tag: string
@@ -33,6 +34,7 @@ const createContactsQueryKey = (params: ContactsQueryParams) => [
   'contacts',
   {
     page: params.page,
+    pageSize: params.pageSize,
     search: (params.search || '').trim().toLowerCase(),
     status: params.status || 'ALL',
     tag: params.tag || 'ALL',
@@ -50,6 +52,7 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
   const [statusFilter, setStatusFilter] = useState<ContactStatus | 'ALL' | 'SUPPRESSED'>('ALL');
   const [tagFilter, setTagFilter] = useState<string>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(PAGINATION.contacts);
 
   // Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -66,6 +69,7 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
   // Query key normalizada para consistência de cache
   const queryParams: ContactsQueryParams = {
     page: currentPage,
+    pageSize,
     search: searchTerm,
     status: statusFilter,
     tag: tagFilter,
@@ -73,7 +77,12 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
   const contactsQueryKey = createContactsQueryKey(queryParams);
 
   // Se temos initialData e estamos na página 1 sem filtros, usamos como dados iniciais
-  const isFirstPageNoFilters = currentPage === 1 && !searchTerm.trim() && statusFilter === 'ALL' && tagFilter === 'ALL'
+  const isFirstPageNoFilters =
+    currentPage === 1 &&
+    pageSize === PAGINATION.contacts &&
+    !searchTerm.trim() &&
+    statusFilter === 'ALL' &&
+    tagFilter === 'ALL'
   const contactsInitial = isFirstPageNoFilters && initialData
     ? { data: initialData.contacts, total: initialData.total }
     : undefined
@@ -81,8 +90,8 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
   const contactsQuery = useQuery({
     queryKey: contactsQueryKey,
     queryFn: () => contactService.list({
-      limit: PAGINATION.contacts,
-      offset: (currentPage - 1) * PAGINATION.contacts,
+      limit: pageSize,
+      offset: (currentPage - 1) * pageSize,
       search: searchTerm.trim(),
       status: statusFilter,
       tag: tagFilter,
@@ -296,8 +305,11 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
       if (result.inserted > 0) parts.push(`${result.inserted} novos`);
       if (result.updated > 0) parts.push(`${result.updated} atualizados`);
       toast.success(`Importação concluída: ${parts.join(', ') || '0 contatos'}`);
+      if (result.rejected > 0) {
+        toast.warning(`${result.rejected} telefone(s) inválido(s) foram ignorados`);
+      }
     },
-    onError: () => toast.error('Erro ao importar contatos')
+    onError: (error: Error) => toast.error(error.message || 'Erro ao importar contatos')
   });
 
   // New: Import from file with validation report
@@ -333,7 +345,7 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
   // --- Filtering & Pagination Logic (server-side) ---
   const contacts = contactsQuery.data?.data || [];
   const totalFiltered = contactsQuery.data?.total || 0;
-  const totalPages = Math.max(1, Math.ceil(totalFiltered / PAGINATION.contacts));
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -355,6 +367,13 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
   const handleTagFilterChange = useCallback((tag: string) => {
     setTagFilter(tag);
     setCurrentPage(1);
+  }, []);
+
+  const handlePageSizeChange = useCallback((size: number) => {
+    const allowed = PAGINATION.contactPageSizes as readonly number[]
+    const next = allowed.includes(size) ? size : PAGINATION.contacts
+    setPageSize(next)
+    setCurrentPage(1)
   }, []);
 
   // --- Selection Logic (extracted to reusable hook) ---
@@ -472,7 +491,10 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
     setCurrentPage,
     totalPages,
     totalFiltered,
-    itemsPerPage: PAGINATION.contacts,
+    pageSize,
+    setPageSize: handlePageSizeChange,
+    pageSizeOptions: PAGINATION.contactPageSizes,
+    itemsPerPage: pageSize,
 
     // Selection
     selectedIds,

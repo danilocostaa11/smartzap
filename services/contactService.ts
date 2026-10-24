@@ -194,7 +194,7 @@ export const contactService = {
    * - New contacts: inserted
    * - Existing contacts (by phone): updated with merged tags
    */
-  import: async (contacts: Omit<Contact, 'id' | 'lastActive'>[]): Promise<{ inserted: number; updated: number }> => {
+  import: async (contacts: Omit<Contact, 'id' | 'lastActive'>[]): Promise<{ inserted: number; updated: number; rejected: number }> => {
     const validContacts = contacts
       .map(c => {
         const { normalized, validation } = processPhoneNumber(c.phone);
@@ -203,13 +203,23 @@ export const contactService = {
       })
       .filter((c): c is Omit<Contact, 'id' | 'lastActive'> => c !== null);
 
-    logger.info('Import contacts', { total: contacts.length, valid: validContacts.length });
+    const rejected = contacts.length - validContacts.length;
+
+    logger.info('Import contacts', { total: contacts.length, valid: validContacts.length, rejected });
+
+    if (validContacts.length === 0) {
+      throw new Error(
+        rejected > 0
+          ? `Nenhum telefone válido para WhatsApp (${rejected} rejeitado${rejected === 1 ? '' : 's'}). Use DDD+celular, ex: 11999999999`
+          : 'Nenhum contato para importar'
+      );
+    }
 
     const { inserted, updated } = await api.post<{ inserted: number; updated: number }>(
       '/api/contacts/import',
       { contacts: validContacts }
     );
-    return { inserted: inserted || 0, updated: updated || 0 };
+    return { inserted: inserted || 0, updated: updated || 0, rejected };
   },
 
   delete: (id: string): Promise<void> =>

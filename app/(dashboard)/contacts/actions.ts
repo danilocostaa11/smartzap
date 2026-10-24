@@ -2,10 +2,11 @@
 
 import { cache } from 'react'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { PAGINATION } from '@/lib/constants'
 import { ContactStatus } from '@/types'
 import type { Contact, CustomFieldDefinition } from '@/types'
 
-const PAGE_SIZE = 50
+const PAGE_SIZE = PAGINATION.contacts
 
 export interface ContactsInitialData {
   contacts: Contact[]

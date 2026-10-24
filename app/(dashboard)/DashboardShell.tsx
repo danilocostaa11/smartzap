@@ -184,7 +184,7 @@ export function DashboardShell({
             case '/contacts':
                 queryClient.prefetchQuery({
                     queryKey: ['contacts', { page: 1, search: '', status: 'ALL', tag: 'ALL' }],
-                    queryFn: () => contactService.list({ limit: 10, offset: 0, search: '', status: 'ALL', tag: 'ALL' }),
+                    queryFn: () => contactService.list({ limit: 50, offset: 0, search: '', status: 'ALL', tag: 'ALL' }),
                     staleTime: 30000,
                 })
                 break

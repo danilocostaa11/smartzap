@@ -59,6 +59,9 @@ export interface ContactListViewProps {
   totalPages: number;
   totalFiltered: number;
   onPageChange: (page: number) => void;
+  pageSize: number;
+  pageSizeOptions: readonly number[];
+  onPageSizeChange: (size: number) => void;
 
   // Selection
   selectedIds: Set<string>;
@@ -109,6 +112,9 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
   totalPages,
   totalFiltered,
   onPageChange,
+  pageSize,
+  pageSizeOptions,
+  onPageSizeChange,
   selectedIds,
   onToggleSelect,
   onToggleSelectAll,
@@ -336,6 +342,9 @@ export const ContactListView: React.FC<ContactListViewProps> = ({
           totalFiltered={totalFiltered}
           hasActiveFilters={hasActiveFilters}
           onClearFilters={handleClearFilters}
+          pageSize={pageSize}
+          pageSizeOptions={pageSizeOptions}
+          onPageSizeChange={onPageSizeChange}
         />
 
         {/* Selection Banner */}

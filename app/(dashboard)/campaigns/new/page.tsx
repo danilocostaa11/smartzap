@@ -292,7 +292,7 @@ export default function CampaignsNewRealPage() {
                     <div>
                       <h2 className="text-lg font-semibold text-[var(--ds-text-primary)]">Variáveis do Template</h2>
                       <p className="text-sm text-[var(--ds-text-muted)]">
-                        Preencha os valores que serão usados neste template. Esses valores serão iguais para todos os destinatários.
+                        Use texto fixo ou variável dinâmica (ícone {'{}'} → Nome). Dinâmicas mudam por destinatário; texto fixo é igual para todos.
                       </p>
                     </div>
                   </div>

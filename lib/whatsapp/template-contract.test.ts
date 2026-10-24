@@ -1,6 +1,33 @@
 import { describe, expect, it } from 'vitest'
-import { precheckContactForTemplate } from '@/lib/whatsapp/template-contract'
+import {
+  precheckContactForTemplate,
+  resolveVarValue,
+  canonicalizeVarToken,
+} from '@/lib/whatsapp/template-contract'
 import { buildMetaTemplatePayload, renderTemplatePreviewText } from '@/lib/whatsapp/template-payload'
+
+describe('canonicalizeVarToken / resolveVarValue', () => {
+  const contact = {
+    contactId: 'c_1',
+    name: 'Danilo',
+    phone: '+5511999999999',
+    email: 'danilo@exemplo.com',
+    custom_fields: { cidade: 'SP' },
+  }
+
+  it('aceita aliases de nome com espaços e lead.name', () => {
+    expect(canonicalizeVarToken('{{ nome }}')).toBe('{{nome}}')
+    expect(canonicalizeVarToken('lead.name')).toBe('{{nome}}')
+    expect(canonicalizeVarToken('{{lead.name}}')).toBe('{{nome}}')
+    expect(resolveVarValue('lead.name', contact)).toBe('Danilo')
+    expect(resolveVarValue('{{ nome }}', contact)).toBe('Danilo')
+    expect(resolveVarValue('{{nome}}', contact)).toBe('Danilo')
+  })
+
+  it('mantém texto fixo literal', () => {
+    expect(resolveVarValue('Cliente VIP', contact)).toBe('Cliente VIP')
+  })
+})
 
 const baseTemplate = {
   id: 'tpl_1',

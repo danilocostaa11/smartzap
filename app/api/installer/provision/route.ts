@@ -177,7 +177,8 @@ async function validateVercelToken(token: string): Promise<{ projectId: string; 
 
 async function validateQStashToken(token: string): Promise<void> {
   // Detecta região via JWT (mesmo padrão de /api/installer/qstash/validate)
-  let qstashBaseUrl = 'https://qstash.upstash.io';
+  // Mesmo endpoint do passo 4 do wizard (/api/installer/qstash/validate): US-East-1.
+  let qstashBaseUrl = 'https://qstash-us-east-1.upstash.io';
   try {
     const payloadB64 = token.split('.')[1];
     if (payloadB64) {
@@ -198,7 +199,9 @@ async function validateQStashToken(token: string): Promise<void> {
     if (res.status === 401 || res.status === 403) {
       throw new Error('Token QStash inválido. Copie o QSTASH_TOKEN do console Upstash → QStash → Details.');
     }
-    throw new Error('Erro ao validar token QStash');
+    const body = await res.text().catch(() => '');
+    console.error('[provision] QStash validate failed', { baseUrl: qstashBaseUrl, status: res.status, body: body.slice(0, 300) });
+    throw new Error(`Erro ao validar token QStash (HTTP ${res.status}): ${body.slice(0, 200) || res.statusText}`);
   }
 }
 

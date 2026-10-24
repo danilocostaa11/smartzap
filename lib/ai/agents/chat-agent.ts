@@ -19,7 +19,7 @@ import { z } from 'zod'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { DEFAULT_MODEL_ID } from '@/lib/ai/model'
 import { getAiDirectConfig } from '@/lib/ai/ai-center-config'
-import { resolveOpenCodeGoBaseUrl } from '@/lib/ai/providers'
+import { createOpenCodeGoModel, resolveOpenCodeGoModelId } from '@/lib/ai/providers'
 import type { AIAgent, InboxConversation, InboxMessage } from '@/types'
 
 // NOTE: AI dependencies are imported DYNAMICALLY inside processChatAgent
@@ -393,9 +393,10 @@ export async function processChatAgent(
   // de modelo, então `claude-haiku-5-5` via OpenCode Go vai para o OpenCode Go.
   let rawModel
   if (directConfig.provider === 'opencode_go' && directConfig.opencodeGoApiKey) {
-    // Gateway OpenAI-compatible — SEMPRE Chat Completions (.chat), nunca Responses API.
-    const opencode = createOpenAI({ apiKey: directConfig.opencodeGoApiKey, baseURL: resolveOpenCodeGoBaseUrl() })
-    rawModel = opencode.chat(modelId)
+    // Protocolo por modelo (Anthropic Messages p/ claude-haiku-5-5, Chat Completions p/ os demais).
+    rawModel = await createOpenCodeGoModel(resolveOpenCodeGoModelId(modelId), directConfig.opencodeGoApiKey, {
+      sessionId: conversation?.id ? `smartzap-${conversation.id}` : undefined,
+    })
   } else if (directConfig.provider === 'openai' && directConfig.openaiApiKey) {
     const openai = createOpenAI({ apiKey: directConfig.openaiApiKey })
     rawModel = openai(modelId)

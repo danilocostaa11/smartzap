@@ -37,7 +37,7 @@ export const OPENCODE_GO_BASE_URL_DEFAULT = 'https://opencode.ai/zen/go/v1';
 
 /**
  * Modelo padrão recomendado do OpenCode Go.
- * Constante única e fácil de trocar. (id a confirmar)
+ * Constante única e fácil de trocar.
  */
 export const OPENCODE_GO_DEFAULT_MODEL = 'claude-haiku-5-5';
 
@@ -46,15 +46,86 @@ export function resolveOpenCodeGoBaseUrl(): string {
     return process.env.OPENCODE_GO_BASE_URL?.trim() || OPENCODE_GO_BASE_URL_DEFAULT;
 }
 
+// =============================================================================
+// Protocolo por modelo (o catálogo OpenCode Go mistura protocolos)
+// =============================================================================
+
+export type OpenCodeGoProtocol = 'anthropic' | 'responses' | 'chat';
+
 /**
- * Cria modelo de chat OpenCode Go via Chat Completions API.
- *
- * @ai-sdk/openai v3 usa Responses API em `client(modelId)` → 404 no Zen Go.
- * OpenCode Go só expõe `/v1/chat/completions` — use SEMPRE `.chat(modelId)`.
+ * Modelos que falam o protocolo Anthropic Messages (`<base>/messages`).
+ * Criados com `createAnthropic({ apiKey, baseURL }).languageModel(id)`.
  */
-export async function createOpenCodeGoChatModel(modelId: string, apiKey: string) {
+const OPENCODE_GO_ANTHROPIC_MODELS = new Set<string>([
+    'claude-haiku-5-5',
+    'minimax-m3',
+    'qwen3.8-max',
+    'qwen3.8-flash',
+    'qwen3.7-plus',
+]);
+
+/**
+ * Modelos que falam o protocolo OpenAI Responses (`createOpenAI(...).responses(id)`).
+ * Não listados no catálogo abaixo (não os expomos na UI), mas o roteamento é correto
+ * caso um id livre seja salvo.
+ */
+const OPENCODE_GO_RESPONSES_MODELS = new Set<string>([
+    'grok-4.7',
+    'gpt-6-luna',
+    'gpt-5.6-luna',
+    'muse-spark-1.3-contributor',
+    'muse-spark-1.2-contributor',
+]);
+
+/**
+ * Aliases de compatibilidade: ids antigos salvos em agentes → id atual do catálogo.
+ */
+const OPENCODE_GO_MODEL_ALIASES: Record<string, string> = {
+    'deepseek-v4-flash': 'deepseek-v4.1-flash',
+};
+
+/** Normaliza um id de modelo OpenCode Go (resolve aliases de compat). */
+export function normalizeOpenCodeGoModel(modelId: string): string {
+    return OPENCODE_GO_MODEL_ALIASES[modelId] || modelId;
+}
+
+/** Decide qual protocolo usar para um modelo OpenCode Go. */
+export function resolveOpenCodeGoProtocol(modelId: string): OpenCodeGoProtocol {
+    const id = normalizeOpenCodeGoModel(modelId);
+    if (OPENCODE_GO_ANTHROPIC_MODELS.has(id)) return 'anthropic';
+    if (OPENCODE_GO_RESPONSES_MODELS.has(id)) return 'responses';
+    return 'chat';
+}
+
+export interface OpenCodeGoModelOpts {
+    /** Sessão estável por conversa (ex.: id da conversa do inbox). Omitir se ausente. */
+    sessionId?: string;
+}
+
+/**
+ * Cria o LanguageModel correto para um modelo OpenCode Go, respeitando o protocolo:
+ * - anthropic → `createAnthropic({ apiKey, baseURL }).languageModel(id)` (POST <base>/messages)
+ * - responses → `createOpenAI({ apiKey, baseURL }).responses(id)`
+ * - chat      → `createOpenAI({ apiKey, baseURL }).chat(id)` (POST <base>/chat/completions)
+ *
+ * Envia sempre `User-Agent: smartzap/1.0` e, quando disponível, `x-opencode-session`.
+ */
+export async function createOpenCodeGoModel(modelId: string, apiKey: string, opts?: OpenCodeGoModelOpts) {
+    const id = normalizeOpenCodeGoModel(modelId);
+    const protocol = resolveOpenCodeGoProtocol(id);
+    const baseURL = resolveOpenCodeGoBaseUrl();
+
+    const headers: Record<string, string> = { 'User-Agent': 'smartzap/1.0' };
+    if (opts?.sessionId) headers['x-opencode-session'] = opts.sessionId;
+
+    if (protocol === 'anthropic') {
+        const { createAnthropic } = await import('@ai-sdk/anthropic');
+        return createAnthropic({ apiKey, baseURL, headers }).languageModel(id);
+    }
+
     const { createOpenAI } = await import('@ai-sdk/openai');
-    return createOpenAI({ apiKey, baseURL: resolveOpenCodeGoBaseUrl() }).chat(modelId);
+    const client = createOpenAI({ apiKey, baseURL, headers });
+    return protocol === 'responses' ? client.responses(id) : client.chat(id);
 }
 
 export const AI_PROVIDERS: AIProviderConfig[] = [
@@ -84,26 +155,20 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
         models: [
             // Padrão recomendado no topo (default). Trocar via OPENCODE_GO_DEFAULT_MODEL.
             { id: OPENCODE_GO_DEFAULT_MODEL, name: 'Claude Haiku 5.5', description: 'Rápido e econômico — RECOMENDADO' },
-            { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', description: 'Rápido e econômico' },
-            { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', description: 'Alta capacidade' },
-            { id: 'minimax-m3', name: 'MiniMax M3', description: 'Modelo aberto recente' },
-            { id: 'minimax-m2.7', name: 'MiniMax M2.7', description: 'Equilíbrio custo/qualidade' },
-            { id: 'minimax-m2.5', name: 'MiniMax M2.5', description: 'Leve e rápido' },
+            { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', description: 'Rápido e econômico (exige região Global)' },
+            { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', description: 'Alta capacidade (exige região Global)' },
+            { id: 'glm-5.3-flash', name: 'GLM 5.3 Flash', description: 'Zhipu GLM rápido' },
+            { id: 'glm-5.3', name: 'GLM 5.3', description: 'Zhipu GLM recente' },
+            { id: 'glm-5.2', name: 'GLM 5.2', description: 'Zhipu GLM' },
+            { id: 'kimi-k3', name: 'Kimi K3', description: 'Modelo Kimi atual' },
             { id: 'kimi-k2.7-code', name: 'Kimi K2.7 Code', description: 'Otimizado para código' },
-            { id: 'kimi-k2.6', name: 'Kimi K2.6', description: 'Modelo Kimi atual' },
-            { id: 'kimi-k2.5', name: 'Kimi K2.5', description: 'Kimi econômico' },
-            { id: 'glm-5.2', name: 'GLM 5.2', description: 'Zhipu GLM recente' },
-            { id: 'glm-5.1', name: 'GLM 5.1', description: 'Zhipu GLM' },
-            { id: 'glm-5', name: 'GLM 5', description: 'Zhipu GLM base' },
-            { id: 'qwen3.7-max', name: 'Qwen3.7 Max', description: 'Máxima capacidade Qwen' },
+            { id: 'minimax-m3', name: 'MiniMax M3', description: 'Equilíbrio custo/qualidade' },
+            { id: 'minimax-m3.1-flash', name: 'MiniMax M3.1 Flash', description: 'Leve e rápido' },
+            { id: 'qwen3.8-flash', name: 'Qwen3.8 Flash', description: 'Qwen rápido' },
             { id: 'qwen3.7-plus', name: 'Qwen3.7 Plus', description: 'Qwen equilibrado' },
-            { id: 'qwen3.6-plus', name: 'Qwen3.6 Plus', description: 'Qwen plus' },
-            { id: 'qwen3.5-plus', name: 'Qwen3.5 Plus', description: 'Qwen econômico' },
-            { id: 'mimo-v2-pro', name: 'MiMo V2 Pro', description: 'MiMo pro' },
-            { id: 'mimo-v2-omni', name: 'MiMo V2 Omni', description: 'MiMo omni' },
-            { id: 'mimo-v2.5-pro', name: 'MiMo V2.5 Pro', description: 'MiMo 2.5 pro' },
-            { id: 'mimo-v2.5', name: 'MiMo V2.5', description: 'MiMo 2.5' },
-            { id: 'hy3-preview', name: 'HY3 Preview', description: 'Preview' },
+            { id: 'mimo-v2.6-flash', name: 'MiMo V2.6 Flash', description: 'MiMo rápido' },
+            { id: 'mimo-v2.6-pro', name: 'MiMo V2.6 Pro', description: 'MiMo pro' },
+            { id: 'hy3', name: 'HY3', description: 'Tencent Hunyuan' },
         ],
     },
 ];
@@ -137,5 +202,26 @@ export function getDefaultModel(providerId: AIProvider): AIModel | undefined {
 
 /** Modelos do catálogo OpenCode Go (sugestões — ids livres também são aceitos). */
 export function isOpenCodeGoModel(modelId: string): boolean {
-    return OPENCODE_GO_MODEL_IDS.has(modelId);
+    return OPENCODE_GO_MODEL_IDS.has(normalizeOpenCodeGoModel(modelId));
+}
+
+/**
+ * Resolve o id de modelo a usar quando o provider é OpenCode Go.
+ * Ids de outros provedores (ex.: DEFAULT_MODEL_ID `gemini-*`, `gpt-4o*`) salvos
+ * antes da troca de provider caem no padrão do OpenCode Go em vez de irem para o
+ * gateway com um id inválido — e nunca são roteados para Google/OpenAI.
+ */
+export function resolveOpenCodeGoModelId(modelId?: string | null): string {
+    const id = (modelId || '').trim();
+    if (!id) return resolveOpenCodeGoDefaultModel();
+    const isOtherProvider = AI_PROVIDERS.some(
+        (p) => p.id !== 'opencode_go' && p.models.some((m) => m.id === id)
+    ) || /^gemini-|^gpt-4o/.test(id);
+    if (isOtherProvider) return resolveOpenCodeGoDefaultModel();
+    return normalizeOpenCodeGoModel(id);
+}
+
+/** Padrão do OpenCode Go, sobrescrevível por env OPENCODE_GO_DEFAULT_MODEL. */
+export function resolveOpenCodeGoDefaultModel(): string {
+    return process.env.OPENCODE_GO_DEFAULT_MODEL?.trim() || OPENCODE_GO_DEFAULT_MODEL;
 }

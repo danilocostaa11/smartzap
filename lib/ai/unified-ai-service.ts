@@ -9,13 +9,13 @@
  * - `const result = await ai.generateText({ prompt: 'Olá' })`
  */
 
-import { generateText as vercelGenerateText, streamText as vercelStreamText, type ModelMessage } from 'ai'
+import { generateText as vercelGenerateText, streamText as vercelStreamText, type ModelMessage, type LanguageModel } from 'ai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
 
 import { getAiDirectConfig } from './ai-center-config'
 import type { AiDirectConfig } from './ai-center-defaults'
-import { resolveOpenCodeGoBaseUrl } from './providers'
+import { createOpenCodeGoModel, resolveOpenCodeGoModelId } from './providers'
 
 // =============================================================================
 // TYPES
@@ -62,7 +62,7 @@ export interface GenerateTextResult {
  * Cria a instância do modelo de linguagem com base na configuração de provider.
  * Lança erro se a chave do provider não estiver configurada.
  */
-function createModelInstance(config: AiDirectConfig, modelOverride?: string) {
+async function createModelInstance(config: AiDirectConfig, modelOverride?: string): Promise<LanguageModel> {
     const modelId = modelOverride || config.model
 
     if (config.provider === 'google') {
@@ -77,9 +77,8 @@ function createModelInstance(config: AiDirectConfig, modelOverride?: string) {
         if (!config.opencodeGoApiKey) {
             throw new Error('Chave OpenCode Go não configurada. Acesse Configurações → IA e insira sua OpenCode Go API Key.')
         }
-        // OpenCode Go é gateway OpenAI-compatible — SEMPRE Chat Completions (.chat), nunca Responses API.
-        const opencode = createOpenAI({ apiKey: config.opencodeGoApiKey, baseURL: resolveOpenCodeGoBaseUrl() })
-        return opencode.chat(modelId)
+        // Protocolo por modelo (Anthropic Messages / Responses / Chat Completions).
+        return createOpenCodeGoModel(resolveOpenCodeGoModelId(modelId), config.opencodeGoApiKey)
     }
 
     if (!config.openaiApiKey) {
@@ -113,12 +112,12 @@ function handleProviderError(error: unknown, modelId: string): never {
 }
 
 type CallArgs =
-    | { model: ReturnType<typeof createModelInstance>; system: string | undefined; temperature: number; maxOutputTokens?: number; messages: ModelMessage[] }
-    | { model: ReturnType<typeof createModelInstance>; system: string | undefined; temperature: number; maxOutputTokens?: number; prompt: string }
+    | { model: LanguageModel; system: string | undefined; temperature: number; maxOutputTokens?: number; messages: ModelMessage[] }
+    | { model: LanguageModel; system: string | undefined; temperature: number; maxOutputTokens?: number; prompt: string }
 
 function buildArgs(
     options: GenerateTextOptions,
-    modelInstance: ReturnType<typeof createModelInstance>,
+    modelInstance: LanguageModel,
 ): CallArgs {
     const base = {
         model: modelInstance,
@@ -145,7 +144,7 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
     const modelId = options.model || config.model
     console.log(`[AI Service] Generating with ${config.provider}/${modelId}`)
 
-    const modelInstance = createModelInstance(config, modelId)
+    const modelInstance = await createModelInstance(config, modelId)
 
     try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -164,7 +163,7 @@ export async function streamText(options: StreamTextOptions): Promise<GenerateTe
     const modelId = options.model || config.model
     console.log(`[AI Service] Streaming with ${config.provider}/${modelId}`)
 
-    const modelInstance = createModelInstance(config, modelId)
+    const modelInstance = await createModelInstance(config, modelId)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = vercelStreamText(buildArgs(options, modelInstance) as any)

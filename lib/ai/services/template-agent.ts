@@ -3,7 +3,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenAI } from '@ai-sdk/openai'
 import { DEFAULT_MODEL_ID } from '../model'
 import { getAiDirectConfig } from '../ai-center-config'
-import { resolveOpenCodeGoBaseUrl } from '../providers'
+import { createOpenCodeGoModel, resolveOpenCodeGoModelId } from '../providers'
 
 // ============================================================================
 // TEMPLATE CATEGORIES
@@ -189,9 +189,7 @@ export async function generateTemplatesWithAgent(
         model = google(targetModelId)
     } else if (config.provider === 'opencode_go') {
         if (!config.opencodeGoApiKey) throw new Error('Chave OpenCode Go não configurada. Acesse Configurações → IA.')
-        // Gateway OpenAI-compatible — SEMPRE Chat Completions (.chat).
-        const opencode = createOpenAI({ apiKey: config.opencodeGoApiKey, baseURL: resolveOpenCodeGoBaseUrl() })
-        model = opencode.chat(targetModelId)
+        model = await createOpenCodeGoModel(resolveOpenCodeGoModelId(targetModelId), config.opencodeGoApiKey)
     } else {
         if (!config.openaiApiKey) throw new Error('Chave OpenAI não configurada. Acesse Configurações → IA.')
         const openai = createOpenAI({ apiKey: config.openaiApiKey })

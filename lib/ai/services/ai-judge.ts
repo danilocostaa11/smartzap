@@ -4,7 +4,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { JudgmentSchema, type Judgment } from '../schemas/template-schemas'
 import { buildUtilityJudgePrompt } from '../prompts/utility-judge'
 import { getAiDirectConfig, getAiPromptsConfig } from '../ai-center-config'
-import { resolveOpenCodeGoBaseUrl } from '../providers'
+import { createOpenCodeGoModel, resolveOpenCodeGoModelId } from '../providers'
 import { DEFAULT_MODEL_ID } from '../model'
 
 // ============================================================================
@@ -36,9 +36,7 @@ export async function judgeTemplate(
         model = google(targetModelId)
     } else if (config.provider === 'opencode_go') {
         if (!config.opencodeGoApiKey) throw new Error('Chave OpenCode Go não configurada. Acesse Configurações → IA.')
-        // Gateway OpenAI-compatible — SEMPRE Chat Completions (.chat).
-        const opencode = createOpenAI({ apiKey: config.opencodeGoApiKey, baseURL: resolveOpenCodeGoBaseUrl() })
-        model = opencode.chat(targetModelId)
+        model = await createOpenCodeGoModel(resolveOpenCodeGoModelId(targetModelId), config.opencodeGoApiKey)
     } else {
         if (!config.openaiApiKey) throw new Error('Chave OpenAI não configurada. Acesse Configurações → IA.')
         const openai = createOpenAI({ apiKey: config.openaiApiKey })

@@ -24,31 +24,25 @@ function LoginForm() {
   const [isConfigured, setIsConfigured] = useState(true)
 
   useEffect(() => {
-    try {
-      const host = window.location.hostname
-      setIsLocalhost(host === 'localhost' || host === '127.0.0.1' || host === '::1')
-    } catch {
-      setIsLocalhost(false)
-    }
+    const isLocal =
+      typeof window !== 'undefined' &&
+      ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
 
-    // Get company name from auth status
+    setIsLocalhost(isLocal)
+
     fetch('/api/auth/status')
-      .then(res => {
-        return res.json()
-      })
-      .then(async (data) => {
+      .then(res => res.json())
+      .then((data) => {
         if (!data.isConfigured) {
           setIsConfigured(false)
 
-          // Em localhost, não forçamos o fluxo da Vercel. Mostramos instrução para configurar .env.local.
-          if (isLocalhost) {
+          if (isLocal) {
             setError('Configuração local incompleta: defina MASTER_PASSWORD no .env.local e reinicie o servidor (npm run dev).')
             return
           }
 
           router.push('/install')
         } else if (!data.isSetup) {
-          // Instalação incompleta - redireciona para o wizard
           router.push('/install/wizard')
         } else if (data.isAuthenticated) {
           router.push('/')
@@ -57,9 +51,9 @@ function LoginForm() {
         }
       })
       .catch((err) => {
-        console.error('🔍 [LOGIN] Auth status error:', err)
+        console.error('[LOGIN] Auth status error:', err)
       })
-  }, [router, isLocalhost])
+  }, [router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -82,6 +76,9 @@ function LoginForm() {
       const data = await response.json()
 
       if (!response.ok) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[LOGIN] Falha:', response.status, data.error)
+        }
         throw new Error(data.error || 'Erro ao fazer login')
       }
 

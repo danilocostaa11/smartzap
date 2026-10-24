@@ -43,9 +43,9 @@ export default function SettingsPage() {
       </PageHeader>
 
       {/* Grid responsivo: mobile=1col, xl=3col */}
-      <div className="flex flex-col xl:flex-row gap-8">
+      <div className="flex flex-col xl:flex-row gap-8 min-w-0 overflow-x-hidden">
         {/* Settings Main Content */}
-        <div className="flex-1 min-w-0 xl:max-w-3xl">
+        <div className="flex-1 min-w-0 xl:max-w-3xl overflow-x-auto">
           <SettingsView
             settings={controller.settings}
             setSettings={controller.setSettings}

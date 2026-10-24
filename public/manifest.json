@@ -1,9 +1,9 @@
 {
-  "name": "SmartZap Atendimento",
+  "name": "SmartZap",
   "short_name": "SmartZap",
-  "description": "Central de atendimento WhatsApp com IA",
-  "start_url": "/atendimento",
-  "scope": "/atendimento",
+  "description": "Plataforma de automação de marketing via WhatsApp",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#18181b",
@@ -40,14 +40,14 @@
       "sizes": "390x844",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "Lista de conversas"
+      "label": "Inbox e atendimento"
     },
     {
       "src": "/screenshots/desktop.png",
       "sizes": "1280x720",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "Dashboard de atendimento"
+      "label": "Dashboard SmartZap"
     }
   ],
   "categories": ["business", "productivity"],
@@ -56,11 +56,25 @@
   "prefer_related_applications": false,
   "shortcuts": [
     {
-      "name": "Conversas Urgentes",
-      "short_name": "Urgentes",
-      "description": "Ver conversas que precisam de atenção",
-      "url": "/atendimento?filter=urgent",
+      "name": "Inbox",
+      "short_name": "Inbox",
+      "description": "Abrir conversas do WhatsApp",
+      "url": "/inbox",
       "icons": [{ "src": "/icons/shortcut-urgent.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Campanhas",
+      "short_name": "Campanhas",
+      "description": "Gerenciar campanhas",
+      "url": "/campaigns",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Contatos",
+      "short_name": "Contatos",
+      "description": "Lista de contatos",
+      "url": "/contacts",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }

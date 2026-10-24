@@ -235,7 +235,7 @@ export function MessageInput({
 
   return (
     <div className={cn(
-      'border-t transition-colors duration-150',
+      'border-t transition-colors duration-150 pb-safe',
       isFocused ? 'border-[var(--ds-border-strong)]' : 'border-[var(--ds-border-subtle)]',
       'bg-[var(--ds-bg-elevated)]'
     )}>

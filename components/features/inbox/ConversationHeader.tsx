@@ -27,6 +27,7 @@ import {
   Trash2,
   Settings2,
   Brain,
+  ArrowLeft,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -88,6 +89,8 @@ export interface ConversationHeaderProps {
   onDelete?: () => void
   /** Configure the AI agent for this conversation */
   onConfigureAgent?: () => void
+  /** Mobile: voltar para a lista de conversas */
+  onBack?: () => void
   isUpdating?: boolean
   isHandingOff?: boolean
   isReturningToBot?: boolean
@@ -129,6 +132,7 @@ export function ConversationHeader({
   onResume,
   onDelete,
   onConfigureAgent,
+  onBack,
   isUpdating,
   isHandingOff,
   isReturningToBot,
@@ -195,7 +199,17 @@ export function ConversationHeader({
   return (
     <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--ds-border-subtle)] bg-[var(--ds-bg-elevated)]">
       {/* Contact info - compact */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2.5 min-w-0">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="lg:hidden shrink-0 p-1.5 -ml-1 rounded-md text-[var(--ds-text-secondary)] hover:bg-[var(--ds-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
+            aria-label="Voltar para lista"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+        )}
         {/* Simple avatar */}
         <div className="h-8 w-8 rounded-full bg-[var(--ds-bg-surface)] flex items-center justify-center shrink-0">
           <span className="text-[11px] font-medium text-[var(--ds-text-secondary)]">{initials}</span>

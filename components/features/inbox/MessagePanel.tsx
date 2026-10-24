@@ -59,6 +59,8 @@ export interface MessagePanelProps {
   onDelete?: () => void
   /** Configure AI agent */
   onConfigureAgent?: () => void
+  /** Mobile: voltar para lista */
+  onBack?: () => void
   isUpdating?: boolean
   isHandingOff?: boolean
   isReturningToBot?: boolean
@@ -88,6 +90,7 @@ export function MessagePanel({
   onReturnToBot,
   onDelete,
   onConfigureAgent,
+  onBack,
   isUpdating,
   isHandingOff,
   isReturningToBot,
@@ -200,6 +203,7 @@ export function MessagePanel({
           onReturnToBot={onReturnToBot}
           onDelete={onDelete}
           onConfigureAgent={onConfigureAgent}
+          onBack={onBack}
           isUpdating={isUpdating}
           isHandingOff={isHandingOff}
           isReturningToBot={isReturningToBot}

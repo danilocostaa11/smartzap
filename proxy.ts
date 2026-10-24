@@ -12,12 +12,12 @@ export const config = {
     matcher: [
         // Match all pages except static files and _next
         // Includes: .json (manifest.json), .js (sw.js), common images/audio, and Next.js internals
-        '/((?!_next/static|_next/image|favicon.ico|manifest\\.json|sw\\.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|mp3|wav|ogg|m4a|yaml|yml)$).*)',
+        '/((?!_next/static|_next/image|favicon.ico|manifest\\.json|manifest-atendimento\\.json|sw\\.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|mp3|wav|ogg|m4a|yaml|yml)$).*)',
     ],
 }
 
 // Routes that don't require user authentication
-const PUBLIC_PAGES = ['/login', '/install', '/debug-auth', '/f', '/atendimento', '/docs']
+const PUBLIC_PAGES = ['/login', '/install', '/debug-auth', '/f', '/atendimento', '/docs', '/offline']
 // Rotas que NÃO precisam de autenticação
 // CUIDADO: adicionar rotas aqui expõe elas publicamente!
 const PUBLIC_API_ROUTES = [

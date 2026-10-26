@@ -98,8 +98,25 @@ export function resolveOpenCodeGoProtocol(modelId: string): OpenCodeGoProtocol {
 }
 
 export interface OpenCodeGoModelOpts {
-    /** Sessão estável por conversa (ex.: id da conversa do inbox). Omitir se ausente. */
+    /**
+     * Sessão estável por conversa (ex.: id da conversa do inbox).
+     * Se omitida, uma sessão aleatória é gerada por instância de modelo — o gateway
+     * exige o header `x-opencode-session` em TODA requisição (erro 400 MissingSessionID).
+     */
     sessionId?: string;
+}
+
+/** Nome do header de sessão exigido pelo OpenCode Go. */
+export const OPENCODE_GO_SESSION_HEADER = 'x-opencode-session';
+
+/**
+ * Resolve o valor de `x-opencode-session`: usa o id informado (estável por conversa,
+ * preferido para cache) ou gera um fallback aleatório quando não há conversa.
+ */
+export function resolveOpenCodeGoSessionId(sessionId?: string | null): string {
+    const stable = sessionId?.trim();
+    if (stable) return stable;
+    return `smartzap-${globalThis.crypto.randomUUID()}`;
 }
 
 /**
@@ -108,15 +125,17 @@ export interface OpenCodeGoModelOpts {
  * - responses → `createOpenAI({ apiKey, baseURL }).responses(id)`
  * - chat      → `createOpenAI({ apiKey, baseURL }).chat(id)` (POST <base>/chat/completions)
  *
- * Envia sempre `User-Agent: smartzap/1.0` e, quando disponível, `x-opencode-session`.
+ * Envia sempre `User-Agent: smartzap/1.0` e `x-opencode-session` (obrigatório no gateway).
  */
 export async function createOpenCodeGoModel(modelId: string, apiKey: string, opts?: OpenCodeGoModelOpts) {
     const id = normalizeOpenCodeGoModel(modelId);
     const protocol = resolveOpenCodeGoProtocol(id);
     const baseURL = resolveOpenCodeGoBaseUrl();
 
-    const headers: Record<string, string> = { 'User-Agent': 'smartzap/1.0' };
-    if (opts?.sessionId) headers['x-opencode-session'] = opts.sessionId;
+    const headers: Record<string, string> = {
+        'User-Agent': 'smartzap/1.0',
+        [OPENCODE_GO_SESSION_HEADER]: resolveOpenCodeGoSessionId(opts?.sessionId),
+    };
 
     if (protocol === 'anthropic') {
         const { createAnthropic } = await import('@ai-sdk/anthropic');

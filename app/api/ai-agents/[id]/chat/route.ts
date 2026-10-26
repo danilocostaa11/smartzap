@@ -250,8 +250,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     // Criar modelo direto via provider (Google / OpenAI / OpenCode Go) — factory única
     const config = await getAiDirectConfig()
+    // Stateless mode (sem sessionId): sessão estável por agente para o OpenCode Go.
     const { model: baseModel, modelId: targetModelId } = await createDirectModel(config, agent.model, {
-      sessionId: sessionId ? `smartzap-chat-${sessionId}` : undefined,
+      sessionId: sessionId ? `smartzap-chat-${sessionId}` : `smartzap-chat-agent-${agentId}`,
     })
     const model = await withDevTools(baseModel, { name: `chat:${agent.name}` })
 

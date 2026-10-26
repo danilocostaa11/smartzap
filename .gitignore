@@ -80,6 +80,7 @@ metadata.json
 scripts/*
 !scripts/meta-audit.mjs
 !scripts/nova-instancia.sh
+!scripts/simulate-inbound-burst.mjs
 
 # OS
 .DS_Store

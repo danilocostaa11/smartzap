@@ -20,6 +20,7 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { getAiDirectConfig } from '@/lib/ai/ai-center-config'
 import { createDirectModel } from '@/lib/ai/direct-model'
 import { resolveTemperature } from '@/lib/ai/model-capabilities'
+import { selectPendingInboundMessages } from '@/lib/inbox/ai-debounce'
 import type { AIAgent, InboxConversation, InboxMessage } from '@/types'
 
 // NOTE: AI dependencies are imported DYNAMICALLY inside processChatAgent
@@ -341,8 +342,15 @@ export async function processChatAgent(
   } = await import('@/lib/ai/rag-store')
 
   // Setup message context
+  // Quando o usuário mandou várias mensagens em sequência (burst), TODAS as inbound
+  // ainda não respondidas compõem o "input" (RAG, memória, log). A última continua
+  // sendo usada para reação/quote.
   const lastUserMessage = messages.filter((m) => m.direction === 'inbound').slice(-1)[0]
-  const inputText = lastUserMessage?.content || ''
+  const pendingUserMessages = selectPendingInboundMessages(messages)
+  const inputText =
+    pendingUserMessages.length > 0
+      ? pendingUserMessages.map((m) => m.content).filter(Boolean).join('\n')
+      : lastUserMessage?.content || ''
   const messageIds = messages.map((m) => m.id)
   const aiMessages = convertToAIMessages(messages.slice(-10))
 

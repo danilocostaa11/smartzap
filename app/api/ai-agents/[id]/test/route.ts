@@ -147,8 +147,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const { withDevTools } = await import('@/lib/ai/devtools')
 
     // Criar modelo direto via provider (Google / OpenAI / OpenCode Go) — factory única
+    // Sessão estável por agente: o chat de teste não tem conversa persistida,
+    // mas o OpenCode Go exige `x-opencode-session` (estável = melhor cache).
     const config = await getAiDirectConfig()
-    const { model: baseModel, modelId: targetModelId } = await createDirectModel(config, agent.model)
+    const { model: baseModel, modelId: targetModelId } = await createDirectModel(config, agent.model, {
+      sessionId: `smartzap-test-${id}`,
+    })
 
     // Create model with DevTools support
     const model = await withDevTools(baseModel, { name: `agente:${agent.name}` })

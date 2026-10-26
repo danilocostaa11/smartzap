@@ -38,6 +38,7 @@ import {
 import type { AIAgent, EmbeddingProvider, RerankProvider } from '@/types'
 import type { CreateAIAgentParams, UpdateAIAgentParams } from '@/services/aiAgentService'
 import { DEFAULT_MODEL_ID, AI_PROVIDERS, type AIProvider } from '@/lib/ai/model'
+import { supportsTemperature } from '@/lib/ai/model-capabilities'
 import { EMBEDDING_PROVIDERS, DEFAULT_EMBEDDING_CONFIG } from '@/lib/ai/embeddings'
 import { RERANK_PROVIDERS } from '@/lib/ai/reranking'
 
@@ -344,6 +345,9 @@ export function AIAgentForm({
   // Get selected model info
   const selectedModel = AI_PROVIDERS.flatMap(p => p.models).find((m) => m.id === model)
 
+  // Modelos Claude 5.x+ rejeitam `temperature`; o backend omite o valor para eles
+  const temperatureIgnored = !supportsTemperature(model)
+
   // Verifica se há pelo menos um provider LLM disponível (com API key configurada)
   const hasAvailableLLMProvider = availableLLMProviders.length === 0 || availableLLMProviders.some(p => p.available)
   const isLLMProviderCheckComplete = !llmProvidersLoading && availableLLMProviders.length > 0
@@ -469,7 +473,7 @@ export function AIAgentForm({
                   <div>
                     <span className="text-sm font-medium">Parâmetros Avançados</span>
                     <p className="text-xs text-[var(--ds-text-muted)]">
-                      Criatividade {temperature.toFixed(1)} • Resposta {maxTokens} tokens • Espera {debounceMs / 1000}s
+                      Criatividade {temperatureIgnored ? 'auto' : temperature.toFixed(1)} • Resposta {maxTokens} tokens • Espera {debounceMs / 1000}s
                     </p>
                   </div>
                 </div>
@@ -490,12 +494,18 @@ export function AIAgentForm({
                     min={0}
                     max={2}
                     step={0.1}
+                    disabled={temperatureIgnored}
                     className="w-full"
                   />
                   <div className="flex justify-between text-[10px] text-[var(--ds-text-muted)]">
                     <span>Focado</span>
                     <span>Criativo</span>
                   </div>
+                  {temperatureIgnored && (
+                    <p className="text-xs text-[var(--ds-text-muted)]">
+                      O modelo <span className="font-mono">{model}</span> não aceita ajuste de criatividade — o valor é ignorado no envio.
+                    </p>
+                  )}
                 </div>
 
                 {/* Tamanho da Resposta (Max Tokens) */}

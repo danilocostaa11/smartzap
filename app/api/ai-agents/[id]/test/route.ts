@@ -9,10 +9,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { z } from 'zod'
-import { DEFAULT_MODEL_ID } from '@/lib/ai/model'
 import { getAiDirectConfig } from '@/lib/ai/ai-center-config'
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
-import { createOpenAI } from '@ai-sdk/openai'
+import { createDirectModel } from '@/lib/ai/direct-model'
+import { resolveTemperature } from '@/lib/ai/model-capabilities'
 import {
   findRelevantContent,
   buildEmbeddingConfigFromAgent,
@@ -147,17 +146,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const { generateText, tool, stepCountIs } = await import('ai')
     const { withDevTools } = await import('@/lib/ai/devtools')
 
-    // Criar modelo direto via provider
+    // Criar modelo direto via provider (Google / OpenAI / OpenCode Go) — factory única
     const config = await getAiDirectConfig()
-    const targetModelId = agent.model || config.model || DEFAULT_MODEL_ID
-    let baseModel
-    if (config.provider === 'google') {
-        if (!config.googleApiKey) throw new Error('Chave Google não configurada. Acesse Configurações → IA.')
-        baseModel = createGoogleGenerativeAI({ apiKey: config.googleApiKey })(targetModelId)
-    } else {
-        if (!config.openaiApiKey) throw new Error('Chave OpenAI não configurada. Acesse Configurações → IA.')
-        baseModel = createOpenAI({ apiKey: config.openaiApiKey })(targetModelId)
-    }
+    const { model: baseModel, modelId: targetModelId } = await createDirectModel(config, agent.model)
 
     // Create model with DevTools support
     const model = await withDevTools(baseModel, { name: `agente:${agent.name}` })
@@ -274,7 +265,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
       model,
       system: systemPrompt,
       messages: [{ role: 'user' as const, content: message }],
-      temperature: agent.temperature ?? 0.7,
+      // undefined para modelos que rejeitam `temperature` (Claude 5.x+)
+      temperature: resolveTemperature(targetModelId, agent.temperature),
       maxOutputTokens: agent.max_tokens ?? 1024,
       tools,
       toolChoice: 'required',

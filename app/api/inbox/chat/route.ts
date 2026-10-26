@@ -9,12 +9,11 @@ import {
   tool,
   type UIMessage,
 } from 'ai'
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
-import { createOpenAI } from '@ai-sdk/openai'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase-server'
-import { DEFAULT_MODEL_ID } from '@/lib/ai/model'
 import { getAiDirectConfig } from '@/lib/ai/ai-center-config'
+import { createDirectModel } from '@/lib/ai/direct-model'
+import { resolveTemperature } from '@/lib/ai/model-capabilities'
 import { sendMessage as sendWhatsAppMessageToDB } from '@/lib/inbox/inbox-service'
 import { getConversationById } from '@/lib/inbox/inbox-db'
 import type { AIAgent, InboxConversation } from '@/types'
@@ -210,17 +209,11 @@ export async function POST(req: Request) {
       .slice(-1)[0]
     const inputText = lastUserMessage?.content || ''
 
-    // Criar modelo direto via provider
+    // Criar modelo direto via provider (Google / OpenAI / OpenCode Go) — factory única
     const config = await getAiDirectConfig()
-    const targetModelId = agent.model || config.model || DEFAULT_MODEL_ID
-    let model
-    if (config.provider === 'google') {
-        if (!config.googleApiKey) throw new Error('Chave Google não configurada. Acesse Configurações → IA.')
-        model = createGoogleGenerativeAI({ apiKey: config.googleApiKey })(targetModelId)
-    } else {
-        if (!config.openaiApiKey) throw new Error('Chave OpenAI não configurada. Acesse Configurações → IA.')
-        model = createOpenAI({ apiKey: config.openaiApiKey })(targetModelId)
-    }
+    const { model, modelId: targetModelId } = await createDirectModel(config, agent.model, {
+      sessionId: `smartzap-${conversationId}`,
+    })
 
     console.log(`[inbox/chat] Using model: ${targetModelId} (provider: ${config.provider})`)
 
@@ -292,7 +285,8 @@ export async function POST(req: Request) {
       },
       // OpenCode Go / DeepSeek falha com tool_choice=required; 'auto' ainda usa a tool respond.
       toolChoice: 'auto',
-      temperature: 0.7,
+      // undefined para modelos que rejeitam `temperature` (Claude 5.x+)
+      temperature: resolveTemperature(targetModelId),
       maxOutputTokens: 2048,
     })
 

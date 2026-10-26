@@ -17,9 +17,9 @@
 
 import { z } from 'zod'
 import { getSupabaseAdmin } from '@/lib/supabase'
-import { DEFAULT_MODEL_ID } from '@/lib/ai/model'
 import { getAiDirectConfig } from '@/lib/ai/ai-center-config'
-import { createOpenCodeGoModel, resolveOpenCodeGoModelId } from '@/lib/ai/providers'
+import { createDirectModel } from '@/lib/ai/direct-model'
+import { resolveTemperature } from '@/lib/ai/model-capabilities'
 import type { AIAgent, InboxConversation, InboxMessage } from '@/types'
 
 // NOTE: AI dependencies are imported DYNAMICALLY inside processChatAgent
@@ -219,7 +219,6 @@ export type SupportResponse = z.infer<typeof supportResponseSchema>
 // Constants
 // =============================================================================
 
-const DEFAULT_TEMPERATURE = 0.7
 const DEFAULT_MAX_TOKENS = 2048
 const AI_TIMEOUT_MS = 90_000 // 90 segundos - timeout para chamadas de IA (considera RAG + tools)
 const MAX_TOOL_RETRIES = 2 // Tentativas extras quando LLM não chama respond tool
@@ -332,8 +331,6 @@ export async function processChatAgent(
 
   // Dynamic imports - required for background execution context
   const { generateText, tool, stepCountIs } = await import('ai')
-  const { createGoogleGenerativeAI } = await import('@ai-sdk/google')
-  const { createOpenAI } = await import('@ai-sdk/openai')
   const { withDevTools } = await import('@/lib/ai/devtools')
   const {
     findRelevantContent,
@@ -386,37 +383,30 @@ export async function processChatAgent(
     }
   }
 
-  const modelId = agent.model || directConfig.model || DEFAULT_MODEL_ID
-
   // Criar instância do modelo com a chave do usuário.
   // O provider é SEMPRE explícito (directConfig.provider) — não há detecção por id
   // de modelo, então `claude-haiku-5-5` via OpenCode Go vai para o OpenCode Go.
+  // `modelId` é o id efetivamente usado (OpenCode Go normaliza ids de outros providers).
   let rawModel
-  if (directConfig.provider === 'opencode_go' && directConfig.opencodeGoApiKey) {
-    // Protocolo por modelo (Anthropic Messages p/ claude-haiku-5-5, Chat Completions p/ os demais).
-    rawModel = await createOpenCodeGoModel(resolveOpenCodeGoModelId(modelId), directConfig.opencodeGoApiKey, {
+  let modelId: string
+  try {
+    const direct = await createDirectModel(directConfig, agent.model, {
       sessionId: conversation?.id ? `smartzap-${conversation.id}` : undefined,
     })
-  } else if (directConfig.provider === 'openai' && directConfig.openaiApiKey) {
-    const openai = createOpenAI({ apiKey: directConfig.openaiApiKey })
-    rawModel = openai(modelId)
-  } else if (directConfig.googleApiKey) {
-    const google = createGoogleGenerativeAI({ apiKey: directConfig.googleApiKey })
-    rawModel = google(modelId)
-  } else {
-    const providerLabel =
-      directConfig.provider === 'opencode_go' ? 'OpenCode Go'
-      : directConfig.provider === 'openai' ? 'OpenAI'
-      : 'Google'
+    rawModel = direct.model
+    modelId = direct.modelId
+  } catch (modelError) {
     return {
       success: false,
-      error: `Chave ${providerLabel} não configurada. Acesse Configurações → IA.`,
+      error: modelError instanceof Error ? modelError.message : 'Falha ao criar modelo de IA',
       latencyMs: Date.now() - startTime,
     }
   }
 
   const model = await withDevTools(rawModel, { name: `agente:${agent.name}` })
-  console.log(`[chat-agent] Using ${directConfig.provider}/${modelId}`)
+  // Modelos que rejeitam `temperature` (Claude 5.x+) recebem undefined → campo omitido.
+  const temperature = resolveTemperature(modelId, agent.temperature)
+  console.log(`[chat-agent] Using ${directConfig.provider}/${modelId}${temperature === undefined ? ' (temperature omitida: modelo não suporta)' : ''}`)
 
   // Check if agent has indexed content in pgvector
   let hasKnowledgeBase = false
@@ -794,7 +784,7 @@ ${prefetchText}`
           toolChoice: 'auto',
           // Para quando respond for chamado OU após 5 steps (busca/reação + respond)
           stopWhen: (event) => stopCondition() || stepCountIs(5)(event),
-          temperature: agent.temperature ?? DEFAULT_TEMPERATURE,
+          temperature,
           maxOutputTokens: agent.max_tokens ?? DEFAULT_MAX_TOKENS,
           abortSignal: abortController.signal,
         })

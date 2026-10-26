@@ -10,12 +10,10 @@
  */
 
 import { generateText as vercelGenerateText, streamText as vercelStreamText, type ModelMessage, type LanguageModel } from 'ai'
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
-import { createOpenAI } from '@ai-sdk/openai'
 
 import { getAiDirectConfig } from './ai-center-config'
-import type { AiDirectConfig } from './ai-center-defaults'
-import { createOpenCodeGoModel, resolveOpenCodeGoModelId } from './providers'
+import { createDirectModel, type DirectModel } from './direct-model'
+import { resolveTemperature } from './model-capabilities'
 
 // =============================================================================
 // TYPES
@@ -61,31 +59,12 @@ export interface GenerateTextResult {
 /**
  * Cria a instância do modelo de linguagem com base na configuração de provider.
  * Lança erro se a chave do provider não estiver configurada.
+ * Delegado a `createDirectModel` (factory única, compartilhada com as rotas de chat).
  */
-async function createModelInstance(config: AiDirectConfig, modelOverride?: string): Promise<LanguageModel> {
-    const modelId = modelOverride || config.model
-
-    if (config.provider === 'google') {
-        if (!config.googleApiKey) {
-            throw new Error('Chave Google não configurada. Acesse Configurações → IA e insira sua Google API Key.')
-        }
-        const google = createGoogleGenerativeAI({ apiKey: config.googleApiKey })
-        return google(modelId)
-    }
-
-    if (config.provider === 'opencode_go') {
-        if (!config.opencodeGoApiKey) {
-            throw new Error('Chave OpenCode Go não configurada. Acesse Configurações → IA e insira sua OpenCode Go API Key.')
-        }
-        // Protocolo por modelo (Anthropic Messages / Responses / Chat Completions).
-        return createOpenCodeGoModel(resolveOpenCodeGoModelId(modelId), config.opencodeGoApiKey)
-    }
-
-    if (!config.openaiApiKey) {
-        throw new Error('Chave OpenAI não configurada. Acesse Configurações → IA e insira sua OpenAI API Key.')
-    }
-    const openai = createOpenAI({ apiKey: config.openaiApiKey })
-    return openai(modelId)
+async function createModelInstance(modelOverride?: string): Promise<DirectModel> {
+    const config = await getAiDirectConfig()
+    const direct = await createDirectModel(config, modelOverride)
+    return direct
 }
 
 // =============================================================================
@@ -112,17 +91,18 @@ function handleProviderError(error: unknown, modelId: string): never {
 }
 
 type CallArgs =
-    | { model: LanguageModel; system: string | undefined; temperature: number; maxOutputTokens?: number; messages: ModelMessage[] }
-    | { model: LanguageModel; system: string | undefined; temperature: number; maxOutputTokens?: number; prompt: string }
+    | { model: LanguageModel; system: string | undefined; temperature?: number; maxOutputTokens?: number; messages: ModelMessage[] }
+    | { model: LanguageModel; system: string | undefined; temperature?: number; maxOutputTokens?: number; prompt: string }
 
 function buildArgs(
     options: GenerateTextOptions,
-    modelInstance: LanguageModel,
+    { model, modelId }: DirectModel,
 ): CallArgs {
     const base = {
-        model: modelInstance,
+        model,
         system: options.system,
-        temperature: options.temperature ?? 0.7,
+        // Omitida (undefined) para modelos que rejeitam `temperature` (Claude 5.x+).
+        temperature: resolveTemperature(modelId, options.temperature),
         ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
     }
     return (options.messages
@@ -140,15 +120,13 @@ function buildArgs(
  * A chave de API é lida do Supabase — configurada pelo usuário nas settings de IA.
  */
 export async function generateText(options: GenerateTextOptions): Promise<GenerateTextResult> {
-    const config = await getAiDirectConfig()
-    const modelId = options.model || config.model
-    console.log(`[AI Service] Generating with ${config.provider}/${modelId}`)
-
-    const modelInstance = await createModelInstance(config, modelId)
+    const direct = await createModelInstance(options.model)
+    const { modelId, provider } = direct
+    console.log(`[AI Service] Generating with ${provider}/${modelId}`)
 
     try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const result = await vercelGenerateText(buildArgs(options, modelInstance) as any)
+        const result = await vercelGenerateText(buildArgs(options, direct) as any)
         return { text: result.text, model: modelId }
     } catch (error) {
         handleProviderError(error, modelId)
@@ -159,14 +137,12 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
  * Gera texto em streaming usando o provider configurado.
  */
 export async function streamText(options: StreamTextOptions): Promise<GenerateTextResult> {
-    const config = await getAiDirectConfig()
-    const modelId = options.model || config.model
-    console.log(`[AI Service] Streaming with ${config.provider}/${modelId}`)
-
-    const modelInstance = await createModelInstance(config, modelId)
+    const direct = await createModelInstance(options.model)
+    const { modelId, provider } = direct
+    console.log(`[AI Service] Streaming with ${provider}/${modelId}`)
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = vercelStreamText(buildArgs(options, modelInstance) as any)
+    const result = vercelStreamText(buildArgs(options, direct) as any)
 
     let fullText = ''
     try {

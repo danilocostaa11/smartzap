@@ -15,8 +15,8 @@ import { normalizePhoneNumber } from '@/lib/phone-formatter'
 import { inboxDb, isHumanModeExpired, switchToBotMode, findConversationByPhoneLightweight } from './inbox-db'
 import { cancelDebounce } from '@/lib/ai/agents/chat-agent'
 import { sendWhatsAppMessage } from '@/lib/whatsapp-send'
-import { Client } from '@upstash/qstash'
-import { redis } from '@/lib/redis'
+import { DEFAULT_AI_DEBOUNCE_MS, markLatestInboundMessage } from './ai-debounce'
+import { dispatchAIRespondJob, isAIDispatchAvailable } from './ai-dispatch'
 import type {
   InboxConversation,
   InboxMessage,
@@ -36,16 +36,6 @@ interface ProcessInboundMessageResult {
   ai_agent_id: string | null
   human_mode_expires_at: string | null
   automation_paused_until: string | null
-}
-
-// QStash client para disparar processamento de IA (simplificado)
-const getQStashClient = () => {
-  const token = process.env.QSTASH_TOKEN
-  if (!token) {
-    console.warn('[Inbox] QSTASH_TOKEN não configurado, AI processing não disponível')
-    return null
-  }
-  return new Client({ token })
 }
 
 // =============================================================================
@@ -141,13 +131,17 @@ export async function handleInboundMessage(
           if (isAutomationPaused(result.automation_paused_until)) {
             console.log(`[Inbox] Automation paused until ${result.automation_paused_until}, skipping AI`)
           } else {
+            // A RPC cria conversas com mode='bot' mas SEM ai_agent_id. Sem o vínculo,
+            // get_agent_config cai no fallback e ignora o debounce configurado no agente.
+            const aiAgentId = await ensureConversationAgent(result.conversation_id, result.ai_agent_id)
+
             // Cria objeto lightweight para triggerAIProcessing
             const conversationForTrigger = {
               id: result.conversation_id,
               phone: normalizedPhone,
               status: result.conversation_status,
               mode: currentMode,
-              ai_agent_id: result.ai_agent_id,
+              ai_agent_id: aiAgentId,
               human_mode_expires_at: result.human_mode_expires_at,
               automation_paused_until: result.automation_paused_until,
             } as InboxConversation
@@ -248,7 +242,11 @@ async function handleInboundMessageLegacy(
   }
 
   if (currentMode === 'bot' && !isAutomationPaused(conversation.automation_paused_until)) {
-    triggeredAI = await triggerAIProcessing(conversation as InboxConversation, message)
+    const aiAgentId = await ensureConversationAgent(conversation.id, conversation.ai_agent_id)
+    triggeredAI = await triggerAIProcessing(
+      { ...conversation, ai_agent_id: aiAgentId } as InboxConversation,
+      message
+    )
   }
 
   return {
@@ -259,7 +257,7 @@ async function handleInboundMessageLegacy(
 }
 
 // =============================================================================
-// AI Processing Trigger (T047) - Via QStash com Debounce Reset
+// AI Processing Trigger (T047) - Via QStash com Debounce Reset + lock por conversa
 // =============================================================================
 
 /**
@@ -270,139 +268,112 @@ async function handleInboundMessageLegacy(
  * - Só processa quando o usuário PARA de digitar por X segundos
  *
  * Fluxo:
- * 1. Busca agente para pegar debounce_ms configurado (default: 3s)
- * 2. Atualiza timestamp da "última mensagem" no Redis
+ * 1. Busca agente para pegar debounce_ms configurado (fallback: DEFAULT_AI_DEBOUNCE_MS)
+ * 2. Registra no Redis { ts, messageId } da ÚLTIMA mensagem da conversa
  * 3. Agenda job com delay = debounce_ms
- * 4. Quando job executa, verifica se passou debounce_ms desde última msg
- *    - Se sim: processa (usuário parou de digitar)
- *    - Se não: skipa (outro job mais recente vai processar)
+ * 4. Quando o job executa (app/api/ai/respond):
+ *    - Se existe mensagem mais recente que a dele → skip (superseded)
+ *    - Se ainda não passou debounce_ms → skip (user-still-typing)
+ *    - Caso contrário adquire o lock da conversa e responde TODAS as mensagens pendentes
  */
 async function triggerAIProcessing(
   conversation: InboxConversation,
   message: InboxMessage
 ): Promise<boolean> {
   const conversationId = conversation.id
-  const messageId = message.whatsapp_message_id // Usado para deduplicação
+  const messageId = message.whatsapp_message_id // Usado para deduplicação e "mensagem mais recente"
   const now = Date.now()
 
   console.log(`🔥 [TRIGGER] Starting AI processing for ${conversationId}, messageId=${messageId}`)
 
-  const qstash = getQStashClient()
-
-  if (!qstash) {
+  if (!isAIDispatchAvailable()) {
     console.log('[Inbox] QStash client not available, skipping AI processing')
     return false
   }
 
-  // 1. Busca o agente para pegar o debounce_ms configurado (usa RPC otimizada)
+  // 1. Busca o agente para pegar o debounce_ms configurado
   const agent = await getAgentForTrigger(conversation.ai_agent_id, conversationId)
-  const debounceMs = agent?.debounce_ms ?? 3000 // default 3s (padrão do mercado)
+  const debounceMs = agent?.debounce_ms ?? DEFAULT_AI_DEBOUNCE_MS
   const debounceSeconds = Math.ceil(debounceMs / 1000)
 
   console.log(`🔥 [TRIGGER] Agent debounce: ${debounceMs}ms (${debounceSeconds}s)`)
 
-  // 2. Se debounce desabilitado (0), dispara imediatamente
-  if (debounceMs === 0) {
-    console.log(`🔥 [TRIGGER] Debounce disabled, dispatching immediately`)
-    return await dispatchToQStash(conversationId, debounceMs, 0, messageId)
-  }
-
-  // 3. Atualiza timestamp da ÚLTIMA MENSAGEM no Redis (isso é o "reset" do timer)
-  // Fail-open: Redis morto/DNS inválido NÃO pode impedir o QStash de disparar a IA
-  const redisKey = `ai:lastmsg:${conversationId}`
-  if (redis) {
-    try {
-      // Expira a chave alguns segundos após o delay para limpeza automática
-      await redis.set(redisKey, now, { ex: debounceSeconds + 30 })
-      console.log(`🔥 [TRIGGER] Redis SET ${redisKey} = ${now} (última mensagem)`)
-    } catch (redisError) {
-      console.warn(
-        `⚠️ [TRIGGER] Redis SET failed (continuing without debounce reset):`,
-        redisError instanceof Error ? redisError.message : redisError
-      )
-    }
+  // 2. Registra a ÚLTIMA MENSAGEM da conversa no Redis (reset do timer + "quem responde").
+  // Feito mesmo com debounce=0: o job só processa se for o da mensagem mais recente.
+  // Fail-open: Redis morto/DNS inválido NÃO pode impedir o QStash de disparar a IA.
+  const marked = await markLatestInboundMessage(conversationId, messageId, debounceSeconds + 120, now)
+  if (marked) {
+    console.log(`🔥 [TRIGGER] Redis lastmsg ${conversationId} = ${messageId} @ ${now}`)
   } else {
-    console.log(`⚠️ [TRIGGER] Redis not configured, debounce will be best-effort`)
+    console.log(`⚠️ [TRIGGER] Redis not available, debounce/lock will be best-effort`)
   }
 
-  // 4. Agenda job com delay - quando executar, vai verificar se passou tempo suficiente
-  return await dispatchToQStash(conversationId, debounceMs, debounceSeconds, messageId)
+  // 3. Agenda job com delay (0 = imediato quando debounce desabilitado)
+  return await dispatchAIRespondJob({
+    conversationId,
+    debounceMs,
+    delaySeconds: debounceMs === 0 ? 0 : debounceSeconds,
+    messageId,
+  })
 }
 
 /**
- * Helper: Dispara job para QStash com delay opcional
+ * Garante que a conversa em modo bot esteja vinculada a um agente de IA.
  *
- * DEDUPLICAÇÃO (2026-02-03):
- * - Usa messageId como deduplicationId no QStash
- * - Evita reprocessamento em caso de retry automático do QStash
+ * A RPC process_inbound_message cria conversas sem ai_agent_id; sem o vínculo,
+ * get_agent_config retorna o fallback de debounce e ignora o "Tempo de Espera"
+ * configurado no agente. Resolve o agente padrão ativo e persiste o vínculo
+ * (best-effort, só quando ainda está nulo). Retorna o agentId efetivo.
  */
-async function dispatchToQStash(
+async function ensureConversationAgent(
   conversationId: string,
-  debounceMs: number,
-  delaySeconds: number,
-  messageId?: string | null
-): Promise<boolean> {
-  const qstash = getQStashClient()
-  if (!qstash) return false
+  currentAgentId: string | null | undefined
+): Promise<string | null> {
+  if (currentAgentId) return currentAgentId
 
-  // URL do endpoint - prioridade para variáveis de produção da Vercel
-  // VERCEL_PROJECT_PRODUCTION_URL sempre retorna o domínio customizado em produção
-  const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    (process.env.VERCEL_PROJECT_PRODUCTION_URL &&
-      `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`) ||
-    (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}`) ||
-    'http://localhost:3000'
-
-  const aiRespondUrl = `${baseUrl}/api/ai/respond`
-
-  console.log(`🔥 [TRIGGER] Dispatching to ${aiRespondUrl} with delay=${delaySeconds}s, messageId=${messageId}`)
+  const supabase = getSupabaseAdmin()
+  if (!supabase) return null
 
   try {
-    // Headers para autenticação e bypass
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+    const { data: agent, error } = await supabase
+      .from('ai_agents')
+      .select('id')
+      .eq('is_active', true)
+      .eq('is_default', true)
+      .limit(1)
+      .maybeSingle()
+
+    if (error || !agent?.id) {
+      if (error) console.warn('[Inbox] Falha ao buscar agente padrão:', error.message)
+      return null
     }
 
-    // Adiciona API key para passar pelo middleware de autenticação
-    const apiKey = process.env.SMARTZAP_API_KEY
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`
+    const { error: updateError } = await supabase
+      .from('inbox_conversations')
+      .update({ ai_agent_id: agent.id })
+      .eq('id', conversationId)
+      .is('ai_agent_id', null)
+
+    if (updateError) {
+      console.warn(`[Inbox] Falha ao vincular agente ${agent.id} à conversa ${conversationId}:`, updateError.message)
+    } else {
+      console.log(`🔗 [Inbox] Conversa ${conversationId} vinculada ao agente padrão ${agent.id}`)
     }
 
-    // Se tiver bypass secret configurado, adiciona o header
-    // Isso permite que QStash passe pelo Deployment Protection da Vercel
-    const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
-    if (bypassSecret) {
-      headers['x-vercel-protection-bypass'] = bypassSecret
-    }
-
-    await qstash.publishJSON({
-      url: aiRespondUrl,
-      body: { conversationId, debounceMs, messageId },
-      delay: delaySeconds > 0 ? delaySeconds : undefined,
-      retries: 2,
-      headers,
-      // DEDUPLICAÇÃO: QStash ignora mensagens com mesmo deduplicationId
-      // Janela de 1 hora - evita retry duplicado
-      // NOTA: QStash não aceita ":" no deduplicationId, usar "_"
-      ...(messageId && { deduplicationId: `ai_respond_${messageId.replace(/[^a-zA-Z0-9_-]/g, '_')}` }),
-    })
-
-    console.log(`✅ [TRIGGER] AI scheduled: delay=${delaySeconds}s, debounceMs=${debounceMs}, dedup=${messageId ? 'enabled' : 'disabled'}`)
-    return true
-  } catch (error) {
-    console.error('❌ [TRIGGER] Failed to dispatch AI processing:', error)
-    return false
+    return agent.id
+  } catch (e) {
+    console.warn('[Inbox] ensureConversationAgent exception:', e instanceof Error ? e.message : e)
+    return null
   }
 }
 
 /**
  * Helper: Busca agente para pegar debounce_ms
  *
- * OTIMIZAÇÃO V2 (2026-01-26):
- * - Usa RPC get_agent_config que faz JOIN otimizado
- * - Fallback para queries diretas se RPC não existir
+ * Prioridade:
+ * 1. Agente vinculado à conversa (query direta por id)
+ * 2. RPC get_agent_config (JOIN conversa → agente) — só vale se retornar ai_agent_id
+ * 3. Agente padrão ativo
  *
  * Versão leve que só busca os campos necessários
  */
@@ -410,19 +381,29 @@ async function getAgentForTrigger(agentId: string | null, conversationId?: strin
   const supabase = getSupabaseAdmin()
   if (!supabase) return null
 
-  // OTIMIZAÇÃO: Tenta usar RPC get_agent_config (se tiver conversationId)
-  if (conversationId) {
+  // 1. Agente vinculado à conversa
+  if (agentId) {
+    const { data } = await supabase
+      .from('ai_agents')
+      .select('debounce_ms')
+      .eq('id', agentId)
+      .single()
+    if (data) return { debounce_ms: data.debounce_ms ?? DEFAULT_AI_DEBOUNCE_MS }
+  }
+
+  // 2. RPC get_agent_config (se não sabemos o agentId)
+  if (!agentId && conversationId) {
     try {
       const { data, error } = await supabase.rpc('get_agent_config', {
         p_conversation_id: conversationId,
       })
 
-      if (!error && data) {
+      if (!error && data?.ai_agent_id) {
         console.log(`⚡ [TRIGGER] RPC get_agent_config OK: debounce=${data.debounce_ms}ms`)
-        return { debounce_ms: data.debounce_ms ?? 3000 }
+        return { debounce_ms: data.debounce_ms ?? DEFAULT_AI_DEBOUNCE_MS }
       }
 
-      // Se RPC não existe, fallback para queries diretas
+      // Conversa sem agente vinculado → a RPC devolve só o fallback; usa agente padrão abaixo
       if (error?.code === '42883') {
         console.log('[TRIGGER] RPC get_agent_config não existe, usando fallback')
       }
@@ -431,18 +412,7 @@ async function getAgentForTrigger(agentId: string | null, conversationId?: strin
     }
   }
 
-  // FALLBACK: Queries diretas
-  // Tenta agente específico
-  if (agentId) {
-    const { data } = await supabase
-      .from('ai_agents')
-      .select('debounce_ms')
-      .eq('id', agentId)
-      .single()
-    if (data) return data
-  }
-
-  // Fallback para agente padrão
+  // 3. Agente padrão ativo
   const { data } = await supabase
     .from('ai_agents')
     .select('debounce_ms')
@@ -450,7 +420,7 @@ async function getAgentForTrigger(agentId: string | null, conversationId?: strin
     .eq('is_default', true)
     .single()
 
-  return data || null
+  return data ? { debounce_ms: data.debounce_ms ?? DEFAULT_AI_DEBOUNCE_MS } : null
 }
 
 /**

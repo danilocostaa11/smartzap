@@ -422,4 +422,120 @@ describe('POST /api/ai/respond — burst de mensagens', () => {
     expect(mocks.sendTypingIndicator).toHaveBeenCalledTimes(3)
     expect(mocks.sendWhatsAppMessage.mock.calls.map((c) => c[0].text)).toEqual(['Parte 1', 'Parte 2', 'Parte 3'])
   })
+
+  // ===========================================================================
+  // Hardening: guard de prefill + retry em vez de handoff
+  // ===========================================================================
+
+  it('job atrasado DEPOIS da resposta (sem Redis): histórico termina no bot → não chama a IA nem faz handoff', async () => {
+    addInbound(1)
+    dbMessages.push({
+      id: 'out-prev',
+      conversation_id: CONVERSATION_ID,
+      direction: 'outbound',
+      content: 'Olá! Como posso ajudar?',
+      message_type: 'text',
+      whatsapp_message_id: 'wamid.out.prev',
+      delivery_status: 'sent',
+      created_at: new Date().toISOString(),
+    } as InboxMessage)
+    fakeRedis.failing = true // fail-open: sem dedup, sem lastanswered, sem lock
+
+    const result = await runJob('wamid.1')
+
+    expect(result.status).toBe(200)
+    expect(result.body.skipped).toBe(true)
+    expect(mocks.processChatAgent).not.toHaveBeenCalled()
+    expect(mocks.sendWhatsAppMessage).not.toHaveBeenCalled()
+    expect(mocks.updateConversation).not.toHaveBeenCalled() // conversa continua em modo bot
+    expect(mocks.createMessage).not.toHaveBeenCalled()
+  })
+
+  it('chat-agent pula a IA (prefill: nada pendente) → rota devolve skipped, sem handoff e sem resposta', async () => {
+    await receiveInbound(1, Date.now() - 20_000)
+    mocks.processChatAgent.mockImplementation(async () => ({
+      success: true,
+      skipped: true,
+      skipReason: 'no-pending-user-message',
+      latencyMs: 1,
+    }))
+
+    const result = await runJob('wamid.1')
+
+    expect(result.status).toBe(200)
+    expect(result.body).toEqual({ skipped: true, reason: 'no-pending-user-message' })
+    expect(mocks.sendWhatsAppMessage).not.toHaveBeenCalled()
+    expect(mocks.updateConversation).not.toHaveBeenCalled()
+    expect(mocks.createMessage).not.toHaveBeenCalled()
+    expect(fakeRedis.has(`ai:lock:${CONVERSATION_ID}`)).toBe(false)
+  })
+
+  it('passa à IA um deadline dentro do limite da função (maxDuration - margem para envio)', async () => {
+    await receiveInbound(1, Date.now() - 20_000)
+    const before = Date.now()
+
+    await runJob('wamid.1')
+
+    const input = mocks.processChatAgent.mock.calls[0][0]
+    expect(typeof input.deadlineAt).toBe('number')
+    // 300s de maxDuration - 40s de margem = 260s após o início do request
+    expect(input.deadlineAt).toBeGreaterThanOrEqual(before + 260_000 - 1_000)
+    expect(input.deadlineAt).toBeLessThanOrEqual(Date.now() + 260_000)
+    // E, como sempre, o histórico enviado termina na mensagem do usuário
+    const last = input.messages.at(-1) as InboxMessage
+    expect(last.direction).toBe('inbound')
+  })
+
+  it('IA falha DEPOIS dos retries (success=false) → auto-handoff continua como antes', async () => {
+    await receiveInbound(1, Date.now() - 20_000)
+    mocks.processChatAgent.mockImplementation(async () => ({
+      success: false,
+      error: 'Service Unavailable',
+      latencyMs: 1,
+      response: {
+        message: 'Desculpe, estou com dificuldades técnicas. Vou transferir você para um atendente.',
+        sentiment: 'neutral',
+        confidence: 0,
+        shouldHandoff: true,
+        handoffReason: 'Erro técnico: Service Unavailable',
+      },
+    }))
+
+    const result = await runJob('wamid.1')
+
+    expect(result.body).toMatchObject({ success: false, handedOff: true, error: 'Service Unavailable' })
+    expect(mocks.sendWhatsAppMessage).toHaveBeenCalledTimes(1)
+    expect(mocks.sendWhatsAppMessage.mock.calls[0][0].text).toContain('dificuldades técnicas')
+    expect(mocks.updateConversation).toHaveBeenCalledWith(CONVERSATION_ID, { mode: 'human' })
+    const notes = mocks.createMessage.mock.calls.map((c) => c[0]).filter((m) => m.message_type === 'internal_note')
+    expect(notes).toHaveLength(1)
+    expect(notes[0].content).toContain('Transferência automática')
+  })
+
+  it('handoff explícito pedido pela IA (shouldHandoff: true) continua exatamente como hoje', async () => {
+    await receiveInbound(1, Date.now() - 20_000)
+    mocks.processChatAgent.mockImplementation(async () => ({
+      success: true,
+      latencyMs: 1,
+      logId: 'log-1',
+      response: {
+        message: 'Vou te transferir para um atendente.',
+        sentiment: 'frustrated',
+        confidence: 0.8,
+        shouldHandoff: true,
+        handoffReason: 'Cliente pediu humano',
+        handoffSummary: 'Quer falar com atendente',
+      },
+    }))
+
+    const result = await runJob('wamid.1')
+
+    expect(result.body).toMatchObject({ success: true, handoff: true, answeredMessages: 1 })
+    expect(mocks.sendWhatsAppMessage).toHaveBeenCalledTimes(1)
+    expect(mocks.sendWhatsAppMessage.mock.calls[0][0].text).toBe('Vou te transferir para um atendente.')
+    expect(mocks.updateConversation).toHaveBeenCalledWith(CONVERSATION_ID, { mode: 'human' })
+    const note = mocks.createMessage.mock.calls.map((c) => c[0]).find((m) => m.message_type === 'internal_note')
+    expect(note).toBeDefined()
+    expect(note.payload).toMatchObject({ type: 'ai_handoff', reason: 'Cliente pediu humano', summary: 'Quer falar com atendente' })
+  })
 })

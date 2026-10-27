@@ -20,8 +20,15 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { getAiDirectConfig } from '@/lib/ai/ai-center-config'
 import { createDirectModel } from '@/lib/ai/direct-model'
 import { resolveTemperature } from '@/lib/ai/model-capabilities'
+import { classifyModelError, describeModelError } from '@/lib/ai/model-errors'
 import { selectPendingInboundMessages } from '@/lib/inbox/ai-debounce'
 import type { AIAgent, InboxConversation, InboxMessage } from '@/types'
+import {
+  endsWithUserMessage,
+  toAIChatMessages,
+  trimTrailingAssistantMessages,
+  type AIChatMessage,
+} from './chat-history'
 
 // NOTE: AI dependencies are imported DYNAMICALLY inside processChatAgent
 // This is required because static imports can cause issues when called from
@@ -144,7 +151,14 @@ export interface SupportAgentConfig {
   conversation: InboxConversation
   messages: InboxMessage[]
   contactData?: ContactContext
+  /**
+   * Instante (epoch ms) até o qual a geração precisa terminar — usado para não iniciar
+   * um retry que não caberia no tempo da função serverless. Default: agora + 240s.
+   */
+  deadlineAt?: number
 }
+
+export type SupportAgentSkipReason = 'no-pending-user-message'
 
 export interface SupportAgentResult {
   success: boolean
@@ -152,6 +166,9 @@ export interface SupportAgentResult {
   error?: string
   latencyMs: number
   logId?: string
+  /** true quando a IA NÃO foi chamada de propósito (nada a responder). Sem handoff, sem resposta. */
+  skipped?: boolean
+  skipReason?: SupportAgentSkipReason
 }
 
 // =============================================================================
@@ -225,6 +242,21 @@ const AI_TIMEOUT_MS = 90_000 // 90 segundos - timeout para chamadas de IA (consi
 const MAX_TOOL_RETRIES = 2 // Tentativas extras quando LLM não chama respond tool
 
 /**
+ * Retry para erros TRANSITÓRIOS do provider (5xx, 429, timeout, rede) e para o
+ * "assistant message prefill" (após reconstruir o histórico). Até 2 tentativas extras,
+ * com backoff de ~1s e ~3s. Só depois disso o erro sobe e vira auto-handoff.
+ * Erros de auth/config (401/403/400 em geral) não entram aqui.
+ */
+export const MODEL_RETRY_DELAYS_MS = [1_000, 3_000] as const
+const MAX_MODEL_RETRIES = MODEL_RETRY_DELAYS_MS.length
+/** Orçamento total default quando o chamador não informa `deadlineAt`. */
+const DEFAULT_PROCESSING_BUDGET_MS = 240_000
+/** Tempo mínimo que precisa sobrar (após o backoff) para valer a pena tentar de novo. */
+const MIN_RETRY_ATTEMPT_BUDGET_MS = 10_000
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/**
  * Converte formatação Markdown para WhatsApp.
  * Executado após a resposta do LLM (zero tokens extras).
  *
@@ -257,18 +289,6 @@ function convertMarkdownToWhatsApp(text: string): string {
 // =============================================================================
 // Helpers
 // =============================================================================
-
-function convertToAIMessages(
-  messages: InboxMessage[]
-): Array<{ role: 'user' | 'assistant'; content: string }> {
-  return messages
-    .filter((m) => m.message_type !== 'internal_note')
-    .map((m) => ({
-      role: (m.direction === 'inbound' ? 'user' : 'assistant') as 'user' | 'assistant',
-      content: m.content,
-    }))
-}
-
 
 async function persistAILog(data: {
   conversationId: string
@@ -329,6 +349,19 @@ export async function processChatAgent(
 ): Promise<SupportAgentResult> {
   const { agent, conversation, messages } = config
   const startTime = Date.now()
+  const deadlineAt = config.deadlineAt ?? startTime + DEFAULT_PROCESSING_BUDGET_MS
+
+  // Guard de prefill: o histórico enviado ao modelo precisa terminar numa mensagem do
+  // usuário. Se a última mensagem é do bot (job duplicado/atrasado rodando depois que a
+  // resposta já saiu), não há turno do usuário pendente — pula a IA sem handoff e sem
+  // resposta. (Claude via OpenCode Go rejeitaria com "assistant message prefill".)
+  const aiMessages: AIChatMessage[] = toAIChatMessages(messages.slice(-10))
+  if (!endsWithUserMessage(aiMessages)) {
+    console.log(
+      `[chat-agent] ⏭️ Skipping AI call: history ends with ${aiMessages.length === 0 ? 'no conversational message' : 'an assistant message'} (no pending user message) — conversation=${conversation.id}, messages=${messages.length}`
+    )
+    return { success: true, skipped: true, skipReason: 'no-pending-user-message', latencyMs: Date.now() - startTime }
+  }
 
   // Dynamic imports - required for background execution context
   const { generateText, tool, stepCountIs } = await import('ai')
@@ -352,7 +385,6 @@ export async function processChatAgent(
       ? pendingUserMessages.map((m) => m.content).filter(Boolean).join('\n')
       : lastUserMessage?.content || ''
   const messageIds = messages.map((m) => m.id)
-  const aiMessages = convertToAIMessages(messages.slice(-10))
 
   // =======================================================================
   // MEM0: Fetch relevant memories (graceful degradation)
@@ -747,19 +779,100 @@ ${prefetchText}`
     // =======================================================================
     let retryCount = 0
     let lastLLMText = '' // Guarda texto que o LLM gerou sem chamar tool
+    // Retries por erro TRANSITÓRIO do provider (orçamento compartilhado entre as iterações)
+    let modelRetries = 0
+
+    /**
+     * Chama generateText com retry/backoff para erros transitórios do provider.
+     * - prefill (400): reconstrói o histórico (remove assistente no fim) e tenta de novo;
+     *   se não sobrar mensagem do usuário, devolve `skipped` (nada a responder).
+     * - transient (5xx/429/timeout/rede): espera ~1s, depois ~3s, e tenta de novo.
+     * - fatal (auth/config): sobe imediatamente.
+     * O retry interno do AI SDK fica desligado (maxRetries: 0) para a política ser esta.
+     */
+    const callModelWithRetry = async (
+      currentSystemPrompt: string,
+      initialMessages: AIChatMessage[]
+    ): Promise<{ skipped: true } | { skipped: false; result: Awaited<ReturnType<typeof generateText>> }> => {
+      let currentMessages = initialMessages
+
+      for (;;) {
+        // Timeout AbortController - previne que chamadas de IA fiquem penduradas.
+        // Cada tentativa recebe no máximo AI_TIMEOUT_MS, limitado ao que resta do deadline.
+        const attemptTimeoutMs = Math.max(1_000, Math.min(AI_TIMEOUT_MS, deadlineAt - Date.now()))
+        const abortController = new AbortController()
+        const timeoutId = setTimeout(() => {
+          console.error(`[chat-agent] ⏱️ AI call timed out after ${attemptTimeoutMs}ms`)
+          abortController.abort()
+        }, attemptTimeoutMs)
+
+        try {
+          const result = await generateText({
+            model,
+            system: currentSystemPrompt,
+            messages: currentMessages,
+            tools,
+            // OpenCode Go / DeepSeek falha com tool_choice=required ("Upstream request failed").
+            // 'auto' ainda chama respond via system prompt + schema das tools; o retry loop
+            // abaixo cobre o caso raro de o LLM devolver texto sem chamar a tool.
+            toolChoice: 'auto',
+            // Para quando respond for chamado OU após 5 steps (busca/reação + respond)
+            stopWhen: (event) => stopCondition() || stepCountIs(5)(event),
+            temperature,
+            maxOutputTokens: agent.max_tokens ?? DEFAULT_MAX_TOKENS,
+            abortSignal: abortController.signal,
+            // Retry é responsabilidade de callModelWithRetry (política única e previsível)
+            maxRetries: 0,
+          })
+          clearTimeout(timeoutId)
+          return { skipped: false, result }
+        } catch (genError) {
+          clearTimeout(timeoutId)
+          const elapsed = Date.now() - startGenerate
+          const timedOut = abortController.signal.aborted
+          const kind = classifyModelError(genError, { timedOut })
+          const errorLabel = timedOut ? `timeout após ${attemptTimeoutMs}ms` : describeModelError(genError).slice(0, 300)
+
+          console.error(`[chat-agent] ❌ generateText failed after ${elapsed}ms (${kind}): ${errorLabel}`)
+
+          if (kind === 'prefill') {
+            // Garante que o histórico termina numa mensagem do usuário antes de repetir
+            const rebuilt = trimTrailingAssistantMessages(currentMessages)
+            if (rebuilt.length === 0) {
+              console.log(`[chat-agent] ⏭️ Prefill rejected and no pending user message remains — skipping AI call`)
+              return { skipped: true }
+            }
+            if (rebuilt.length !== currentMessages.length) {
+              console.log(`[chat-agent] ✂️ Rebuilt history: dropped ${currentMessages.length - rebuilt.length} trailing assistant message(s)`)
+            }
+            currentMessages = rebuilt
+          }
+
+          const delayMs = MODEL_RETRY_DELAYS_MS[modelRetries]
+          const fitsDeadline = delayMs !== undefined && Date.now() + delayMs + MIN_RETRY_ATTEMPT_BUDGET_MS <= deadlineAt
+
+          if (kind === 'fatal' || delayMs === undefined || !fitsDeadline) {
+            if (kind !== 'fatal') {
+              console.error(
+                `[chat-agent] 🛑 Not retrying (${delayMs === undefined ? `retries exhausted: ${modelRetries}/${MAX_MODEL_RETRIES}` : 'not enough time before deadline'})`
+              )
+            }
+            if (timedOut) throw new Error(`AI call timed out after ${Math.round(attemptTimeoutMs / 1000)}s`)
+            throw genError
+          }
+
+          modelRetries++
+          console.warn(`[chat-agent] 🔁 Model retry ${modelRetries}/${MAX_MODEL_RETRIES} in ${delayMs}ms (${kind})`)
+          await sleep(delayMs)
+        }
+      }
+    }
 
     while (!hasResponded && retryCount <= MAX_TOOL_RETRIES) {
-      // Timeout AbortController - previne que chamadas de IA fiquem penduradas
-      const abortController = new AbortController()
-      const timeoutId = setTimeout(() => {
-        console.error(`[chat-agent] ⏱️ AI call timed out after ${AI_TIMEOUT_MS}ms`)
-        abortController.abort()
-      }, AI_TIMEOUT_MS)
-
       // Se é retry, adiciona instrução reforçada ao system prompt
       let currentSystemPrompt = systemPrompt
       // Usa cópia do array base para não acumular contexto de retries entre iterações
-      let currentMessages = [...aiMessages]
+      let currentMessages: AIChatMessage[] = [...aiMessages]
       if (retryCount > 0) {
         console.log(`[chat-agent] 🔄 Retry ${retryCount}/${MAX_TOOL_RETRIES} - LLM não chamou respond tool`)
         currentSystemPrompt += `\n\n## INSTRUÇÃO CRÍTICA\nVocê DEVE chamar a tool "respond" para enviar sua resposta. NÃO responda com texto direto. Use a tool respond com message, sentiment e confidence.`
@@ -780,77 +893,55 @@ ${prefetchText}`
         }
       }
 
-      try {
-        const result = await generateText({
-          model,
-          system: currentSystemPrompt,
-          messages: currentMessages,
-          tools,
-          // OpenCode Go / DeepSeek falha com tool_choice=required ("Upstream request failed").
-          // 'auto' ainda chama respond via system prompt + schema das tools; o retry loop
-          // abaixo cobre o caso raro de o LLM devolver texto sem chamar a tool.
-          toolChoice: 'auto',
-          // Para quando respond for chamado OU após 5 steps (busca/reação + respond)
-          stopWhen: (event) => stopCondition() || stepCountIs(5)(event),
-          temperature,
-          maxOutputTokens: agent.max_tokens ?? DEFAULT_MAX_TOKENS,
-          abortSignal: abortController.signal,
-        })
-
-        clearTimeout(timeoutId) // Limpa timeout se completou
-
-        const attemptLabel = retryCount === 0 ? '' : ` (retry ${retryCount})`
-        console.log(`[chat-agent] ✅ generateText completed${attemptLabel} in ${Date.now() - startGenerate}ms`)
-        console.log(`[chat-agent] Steps executed: ${result.steps?.length || 0}`)
-        console.log(`[chat-agent] Tool calls: ${JSON.stringify(result.steps?.map(s => s.toolCalls?.map(tc => tc.toolName)).flat().filter(Boolean) || [])}`)
-        console.log(`[chat-agent] Finish reason: ${result.finishReason}`)
-
-        // 🔍 DIAGNÓSTICO: Log completo quando finishReason é error
-        if (result.finishReason === 'error') {
-          console.error(`[chat-agent] 🔴 PROVIDER ERROR DETAILS:`)
-          console.error(`[chat-agent] - finishReason: ${result.finishReason}`)
-          console.error(`[chat-agent] - text: ${result.text?.slice(0, 200) || 'none'}`)
-          console.error(`[chat-agent] - response headers: ${JSON.stringify(result.response?.headers || {})}`)
-          console.error(`[chat-agent] - warnings: ${JSON.stringify(result.warnings || [])}`)
-          console.error(`[chat-agent] - usage: ${JSON.stringify(result.usage || {})}`)
-          // Log raw response se existir
-          if (result.response?.body) {
-            console.error(`[chat-agent] - raw body available: true`)
-          }
-          // Log cada step em detalhe
-          result.steps?.forEach((step, i) => {
-            console.error(`[chat-agent] - Step ${i + 1} details:`, JSON.stringify({
-              finishReason: step.finishReason,
-              text: step.text?.slice(0, 100),
-              toolCalls: step.toolCalls?.length || 0,
-              warnings: step.warnings,
-            }))
-          })
+      const outcome = await callModelWithRetry(currentSystemPrompt, currentMessages)
+      if (outcome.skipped) {
+        return {
+          success: true,
+          skipped: true,
+          skipReason: 'no-pending-user-message',
+          latencyMs: Date.now() - startTime,
         }
+      }
+      const { result } = outcome
 
-        // Log each step for debugging
+      const attemptLabel = retryCount === 0 ? '' : ` (retry ${retryCount})`
+      console.log(`[chat-agent] ✅ generateText completed${attemptLabel} in ${Date.now() - startGenerate}ms`)
+      console.log(`[chat-agent] Steps executed: ${result.steps?.length || 0}`)
+      console.log(`[chat-agent] Tool calls: ${JSON.stringify(result.steps?.map(s => s.toolCalls?.map(tc => tc.toolName)).flat().filter(Boolean) || [])}`)
+      console.log(`[chat-agent] Finish reason: ${result.finishReason}`)
+
+      // 🔍 DIAGNÓSTICO: Log completo quando finishReason é error
+      if (result.finishReason === 'error') {
+        console.error(`[chat-agent] 🔴 PROVIDER ERROR DETAILS:`)
+        console.error(`[chat-agent] - finishReason: ${result.finishReason}`)
+        console.error(`[chat-agent] - text: ${result.text?.slice(0, 200) || 'none'}`)
+        console.error(`[chat-agent] - response headers: ${JSON.stringify(result.response?.headers || {})}`)
+        console.error(`[chat-agent] - warnings: ${JSON.stringify(result.warnings || [])}`)
+        console.error(`[chat-agent] - usage: ${JSON.stringify(result.usage || {})}`)
+        // Log raw response se existir
+        if (result.response?.body) {
+          console.error(`[chat-agent] - raw body available: true`)
+        }
+        // Log cada step em detalhe
         result.steps?.forEach((step, i) => {
-          console.log(`[chat-agent] Step ${i + 1}: toolCalls=${step.toolCalls?.map(tc => tc.toolName).join(', ') || 'none'}, text=${step.text?.slice(0, 50) || 'none'}...`)
+          console.error(`[chat-agent] - Step ${i + 1} details:`, JSON.stringify({
+            finishReason: step.finishReason,
+            text: step.text?.slice(0, 100),
+            toolCalls: step.toolCalls?.length || 0,
+            warnings: step.warnings,
+          }))
         })
+      }
 
-        // Se LLM retornou texto mas não chamou respond, guarda para retry
-        if (!hasResponded && result.text) {
-          lastLLMText = result.text
-          console.log(`[chat-agent] ⚠️ LLM retornou texto sem chamar respond: "${result.text.slice(0, 100)}..."`)
-        }
+      // Log each step for debugging
+      result.steps?.forEach((step, i) => {
+        console.log(`[chat-agent] Step ${i + 1}: toolCalls=${step.toolCalls?.map(tc => tc.toolName).join(', ') || 'none'}, text=${step.text?.slice(0, 50) || 'none'}...`)
+      })
 
-      } catch (genError) {
-        clearTimeout(timeoutId) // Limpa timeout em caso de erro
-        const elapsed = Date.now() - startGenerate
-
-        // Detecta se foi timeout
-        if (abortController.signal.aborted) {
-          console.error(`[chat-agent] ❌ generateText ABORTED (timeout) after ${elapsed}ms`)
-          throw new Error(`AI call timed out after ${AI_TIMEOUT_MS / 1000}s`)
-        }
-
-        console.error(`[chat-agent] ❌ generateText failed after ${elapsed}ms:`, genError)
-        throw genError
+      // Se LLM retornou texto mas não chamou respond, guarda para retry
+      if (!hasResponded && result.text) {
+        lastLLMText = result.text
+        console.log(`[chat-agent] ⚠️ LLM retornou texto sem chamar respond: "${result.text.slice(0, 100)}..."`)
       }
 
       retryCount++

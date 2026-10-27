@@ -12,6 +12,12 @@
  *
  * Um burst de N mensagens do mesmo usuário gera UMA resposta (ver lib/inbox/ai-debounce.ts).
  *
+ * Robustez da chamada ao modelo:
+ * - Guard de prefill: se o histórico termina em mensagem do bot (job duplicado/atrasado),
+ *   a IA não é chamada (sem handoff, sem resposta) — ver lib/ai/agents/chat-history.ts.
+ * - Erros transitórios do provider (5xx/429/timeout/rede/prefill) são repetidos com
+ *   backoff dentro do chat-agent; o auto-handoff só acontece depois dos retries.
+ *
  * Usa Fluid Compute com maxDuration=300 (5 minutos) - suficiente para 99% dos casos.
  */
 
@@ -33,10 +39,18 @@ import {
   setLastAnsweredMessageId,
 } from '@/lib/inbox/ai-debounce'
 import { dispatchAIRespondJob, type AIRespondJobBody } from '@/lib/inbox/ai-dispatch'
+import { hasPendingUserTurn } from '@/lib/ai/agents/chat-history'
 import type { AIAgent } from '@/types'
 
 // Fluid Compute: 5 minutos de timeout (suficiente para IA)
 export const maxDuration = 300
+
+/**
+ * Reserva de tempo (ms) depois da geração para enviar a resposta pelo WhatsApp
+ * (typing + split por parágrafos) ou executar o fallback de handoff. A IA (incluindo
+ * retries por erro transitório) precisa terminar antes de maxDuration - esta margem.
+ */
+const AI_DEADLINE_MARGIN_MS = 40_000
 
 // Desabilita cache
 export const dynamic = 'force-dynamic'
@@ -274,16 +288,24 @@ async function processConversation(input: {
 
   console.log(`🤖 [AI-RESPOND] ${pendingInbound.length} pending inbound message(s) will be answered together`)
 
-  // Registra ANTES de gerar: se outra mensagem chegar durante a geração, o job dela
-  // vai saber exatamente a partir de onde ainda falta responder.
-  const newestInbound = pendingInbound[pendingInbound.length - 1]
-  await setLastAnsweredMessageId(conversationId, newestInbound.id)
-
   // Contexto para a IA: histórico já respondido primeiro, mensagens pendentes por último.
   // (Uma mensagem que chegou durante a geração anterior fica, no banco, ANTES da resposta
   // anterior; para o modelo ela precisa aparecer DEPOIS, como a vez atual do usuário.)
   const pendingIds = new Set(pendingInbound.map((m) => m.id))
   const messagesForAI = [...messages.filter((m) => !pendingIds.has(m.id)), ...pendingInbound]
+
+  // 6.6. Guard de prefill: o histórico enviado ao modelo PRECISA terminar numa mensagem
+  // do usuário (Claude via OpenCode Go rejeita "assistant message prefill"). Se a última
+  // mensagem é do bot, a resposta já saiu — pula a IA sem handoff e sem nova resposta.
+  if (!hasPendingUserTurn(messagesForAI)) {
+    console.log(`⏭️ [AI-RESPOND] Skipping AI call - history ends with an assistant message (reply already sent)`)
+    return NextResponse.json({ skipped: true, reason: 'no-pending-user-message' })
+  }
+
+  // Registra ANTES de gerar: se outra mensagem chegar durante a geração, o job dela
+  // vai saber exatamente a partir de onde ainda falta responder.
+  const newestInbound = pendingInbound[pendingInbound.length - 1]
+  await setLastAnsweredMessageId(conversationId, newestInbound.id)
 
   // 7. Busca dados do contato (se existir)
   let contactData: ContactContext | undefined
@@ -302,13 +324,22 @@ async function processConversation(input: {
     conversation,
     messages: messagesForAI,
     contactData,
+    // A IA (com retries por erro transitório) precisa terminar a tempo de enviarmos a resposta
+    deadlineAt: startTime + maxDuration * 1000 - AI_DEADLINE_MARGIN_MS,
   })
 
   console.log(`✅ [AI-RESPOND] AI result: success=${result.success}, latency=${result.latencyMs}ms`)
 
-  // 8. Trata erro da IA
+  // 8. IA pulada de propósito (ex.: prefill — histórico sem turno do usuário pendente):
+  // nada a responder, sem handoff.
+  if (result.skipped) {
+    console.log(`⏭️ [AI-RESPOND] AI call skipped by chat-agent: ${result.skipReason}`)
+    return NextResponse.json({ skipped: true, reason: result.skipReason })
+  }
+
+  // 8. Trata erro da IA (já passou pelos retries de erro transitório no chat-agent)
   if (!result.success || !result.response?.message) {
-    console.log(`❌ [AI-RESPOND] AI failed: ${result.error}`)
+    console.log(`❌ [AI-RESPOND] AI failed after retries: ${result.error}`)
 
     // Auto-handoff em caso de erro
     await handleAutoHandoff(conversationId, conversation.phone, result.error || 'AI processing failed')

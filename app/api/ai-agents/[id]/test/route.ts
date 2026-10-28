@@ -16,16 +16,9 @@ import {
   findRelevantContent,
   buildEmbeddingConfigFromAgent,
   hasIndexedContent,
+  resolveEmbeddingApiKeyForAgent,
 } from '@/lib/ai/rag-store'
-import type { AIAgent, EmbeddingProvider } from '@/types'
-
-// Mapeamento de provider para chave de API na tabela settings
-const EMBEDDING_API_KEY_MAP: Record<EmbeddingProvider, { settingKey: string; envVar: string }> = {
-  google: { settingKey: 'google_api_key', envVar: 'GOOGLE_GENERATIVE_AI_API_KEY' },
-  openai: { settingKey: 'openai_api_key', envVar: 'OPENAI_API_KEY' },
-  voyage: { settingKey: 'voyage_api_key', envVar: 'VOYAGE_API_KEY' },
-  cohere: { settingKey: 'cohere_api_key', envVar: 'COHERE_API_KEY' },
-}
+import type { AIAgent } from '@/types'
 
 // =============================================================================
 // Response Schema (dynamic based on handoff_enabled - same as chat-agent)
@@ -190,17 +183,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
     let searchKnowledgeBaseTool: any = undefined
 
     if (hasKnowledgeBase) {
-      // Get embedding API key for the configured provider
-      const embeddingProvider = (agent.embedding_provider || 'google') as EmbeddingProvider
-      const config = EMBEDDING_API_KEY_MAP[embeddingProvider]
-
-      const { data: embeddingKeySetting } = await supabase
-        .from('settings')
-        .select('value')
-        .eq('key', config.settingKey)
-        .maybeSingle()
-
-      const embeddingApiKey = embeddingKeySetting?.value || process.env[config.envVar]
+      // Chave do provider de EMBEDDING (não a do LLM de chat) — mesmo helper do chat-agent
+      // de produção. Precisa ser passada ao embeddingConfig, senão findRelevantContent cai
+      // no gateway (AI_GATEWAY_API_KEY/OIDC) e falha com "Nenhuma chave de embedding disponível".
+      const embeddingKeyResult = await resolveEmbeddingApiKeyForAgent(agent as AIAgent)
+      const embeddingApiKey = embeddingKeyResult.apiKey
 
       if (embeddingApiKey) {
         searchKnowledgeBaseTool = tool({
@@ -213,7 +200,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             searchPerformed = true
             const ragStartTime = Date.now()
 
-            const embeddingConfig = buildEmbeddingConfigFromAgent(agent as AIAgent)
+            const embeddingConfig = buildEmbeddingConfigFromAgent(agent as AIAgent, embeddingApiKey)
 
             const relevantContent = await findRelevantContent({
               agentId: id,
@@ -248,7 +235,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           },
         })
       } else {
-        console.log(`[ai-agents/test] Embedding API key not configured for ${embeddingProvider}`)
+        console.log(`[ai-agents/test] Embedding API key not configured for ${embeddingKeyResult.providerLabel}`)
       }
     }
 

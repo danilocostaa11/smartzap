@@ -41,7 +41,31 @@ export const steps = [
   { id: 4, label: 'Agendamento' },
 ]
 
+/** Quantidade de chips de tag exibidos "de cara" no passo Público (o resto vai para o painel). */
+export const TAG_CHIP_LIMIT = 8
+
 // ── Pure utilities ─────────────────────────────────────────────────────
+
+/**
+ * Chips de tag a exibir no passo Público.
+ *
+ * Mostra as primeiras `limit` tags e garante que toda tag já selecionada
+ * apareça (mesmo que esteja além do limite), preservando a ordem original.
+ * A lista completa continua disponível no painel "Selecionar tags".
+ */
+export const buildVisibleTagChips = (allTags: string[], selectedTags: string[], limit: number = TAG_CHIP_LIMIT): string[] => {
+  const safeLimit = Math.max(0, Math.floor(limit))
+  const selected = new Set(selectedTags)
+  const visible = allTags.slice(0, safeLimit)
+  const visibleSet = new Set(visible)
+  for (const tag of allTags) {
+    if (selected.has(tag) && !visibleSet.has(tag)) {
+      visible.push(tag)
+      visibleSet.add(tag)
+    }
+  }
+  return visible
+}
 
 export const getDefaultScheduleTime = () => {
   const d = new Date()

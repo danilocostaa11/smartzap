@@ -33,6 +33,11 @@ export function invalidateContacts(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: ['contacts'] })
   queryClient.invalidateQueries({ queryKey: ['contactStats'] })
   queryClient.invalidateQueries({ queryKey: ['contactTags'] })
+  // Chaves usadas pelo assistente de campanha (passo Público)
+  queryClient.invalidateQueries({ queryKey: ['contact-tags'] })
+  queryClient.invalidateQueries({ queryKey: ['contact-tag-counts'] })
+  queryClient.invalidateQueries({ queryKey: ['contact-stats'] })
+  queryClient.invalidateQueries({ queryKey: ['segment-count'] })
 }
 
 /**

@@ -8,9 +8,6 @@ import { buildTemplateSpecV1, resolveVarValue } from '@/lib/whatsapp/template-co
 import { replaceTemplatePlaceholders } from '@/lib/whatsapp/placeholder'
 import { campaignService } from '@/services/campaignService'
 import type { CampaignPrecheckResult } from '@/services/campaignService'
-import { getBrazilUfFromPhone } from '@/lib/br-geo'
-import { normalizePhoneNumber } from '@/lib/phone-formatter'
-import { parsePhoneNumber } from 'libphonenumber-js'
 import { humanizePrecheckReason, humanizeVarSource, type ContactFixFocus, type ContactFixTarget } from '@/lib/precheck-humanizer'
 import { getPricingBreakdown } from '@/lib/whatsapp-pricing'
 import { useExchangeRate } from '@/hooks/useExchangeRate'
@@ -19,6 +16,8 @@ import {
   type Contact,
   type CustomField,
   type TemplateVar,
+  TAG_CHIP_LIMIT,
+  buildVisibleTagChips,
   getDefaultScheduleTime,
   buildScheduledAt,
   extractFlowFromTemplate,
@@ -120,9 +119,10 @@ export const useCampaignNewController = () => {
     const month = months[now.getMonth()] || 'mes'
     return `Campanha ${day} de ${month}.`
   })
-  const [tagCounts, setTagCounts] = useState<Record<string, number>>({})
   const [showStatesPanel, setShowStatesPanel] = useState(false)
   const [stateSearch, setStateSearch] = useState('')
+  const [showTagsPanel, setShowTagsPanel] = useState(false)
+  const [tagSearch, setTagSearch] = useState('')
   const { rate: exchangeRate, hasRate } = useExchangeRate()
   const { folders, isLoading: isFoldersLoading } = useCampaignFolders()
 
@@ -160,10 +160,22 @@ export const useCampaignNewController = () => {
   }, [customFieldsQuery.data])
 
   // Queries de audiência - só carregam a partir do Step 2 (Público)
+  // Tags: sem staleTime para que uma tag recém-aplicada em /contatos apareça ao
+  // entrar/recarregar o passo Público (a API já responde com no-store).
   const tagsQuery = useQuery({
     queryKey: ['contact-tags'],
     queryFn: () => fetchJson<string[]>('/api/contacts/tags'),
-    staleTime: 60_000,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    enabled: step >= 2,
+  })
+
+  // Contagem por tag em UMA chamada agregada no banco (todas as tags, não só 6).
+  const tagCountsQuery = useQuery({
+    queryKey: ['contact-tag-counts'],
+    queryFn: () => fetchJson<{ data: Array<{ tag: string; count: number }> }>('/api/contacts/tag-counts'),
+    staleTime: 0,
+    refetchOnMount: 'always',
     enabled: step >= 2,
   })
 
@@ -358,28 +370,14 @@ export const useCampaignNewController = () => {
     return () => controller.abort()
   }, [testContactQuery.data?.phone])
 
-  // Busca contagens de contatos por tag - só roda quando tagsQuery tem dados (step >= 2)
-  useEffect(() => {
-    const tags = (tagsQuery.data || []).slice(0, 6)
-    if (!tags.length) return
-    let cancelled = false
-    Promise.all(
-      tags.map(async (tag) => {
-        const res = await fetchJson<{ total: number }>('/api/contacts?limit=1&tag=' + encodeURIComponent(tag))
-        return [tag, res.total ?? 0] as const
-      })
-    ).then((pairs) => {
-      if (cancelled) return
-      const next: Record<string, number> = {}
-      pairs.forEach(([tag, total]) => {
-        next[tag] = total
-      })
-      setTagCounts(next)
-    })
-    return () => {
-      cancelled = true
+  // Contagem de contatos por tag (todas as tags, agregada no banco)
+  const tagCounts = useMemo(() => {
+    const next: Record<string, number> = {}
+    for (const item of tagCountsQuery.data?.data || []) {
+      if (item && typeof item.tag === 'string') next[item.tag] = Number(item.count) || 0
     }
-  }, [tagsQuery.data])
+    return next
+  }, [tagCountsQuery.data])
 
   const contactFields = [
     { key: 'nome', label: 'Nome' },
@@ -413,17 +411,6 @@ export const useCampaignNewController = () => {
   const resolveValue = (key: string | undefined) => {
     if (!key) return ''
     return sampleValues[key] ?? key
-  }
-
-  const resolveCountry = (phone: string): string | null => {
-    const normalized = normalizePhoneNumber(String(phone || '').trim())
-    if (!normalized) return null
-    try {
-      const parsed = parsePhoneNumber(normalized)
-      return parsed?.country || null
-    } catch {
-      return null
-    }
   }
 
   const buildTemplateVariables = () => {
@@ -559,28 +546,20 @@ export const useCampaignNewController = () => {
       return refreshed
     }
 
-    const contacts = await fetchJson<Contact[]>('/api/contacts')
-    if (audienceMode === 'todos') return contacts
-
-    if (!selectedTags.length && !selectedCountries.length && !selectedStates.length) {
-      return contacts
+    // O público é resolvido NO SERVIDOR, que pagina o banco inteiro e aplica os
+    // filtros (tags/DDI/UF). Antes, `/api/contacts` devolvia só a primeira página
+    // do PostgREST e o filtro era feito no cliente — contatos além dessa página
+    // nunca eram validados nem recebiam a campanha.
+    const params = new URLSearchParams()
+    if (audienceMode === 'segmentos') {
+      params.set('combine', combineMode)
+      if (selectedTags.length) params.set('tags', selectedTags.join(','))
+      if (selectedCountries.length) params.set('countries', selectedCountries.join(','))
+      if (selectedStates.length) params.set('states', selectedStates.join(','))
     }
-
-    return contacts.filter((contact) => {
-      const contactTags = Array.isArray(contact.tags) ? contact.tags : []
-      const phone = String(contact.phone || '')
-      const country = selectedCountries.length ? resolveCountry(phone) : null
-      const uf = selectedStates.length ? getBrazilUfFromPhone(phone) : null
-
-      const tagMatches = selectedTags.map((tag) => contactTags.includes(tag))
-      const countryMatches = selectedCountries.map((code) => Boolean(country && country === code))
-      const stateMatches = selectedStates.map((code) => Boolean(uf && uf === code))
-      const filters = [...tagMatches, ...countryMatches, ...stateMatches]
-
-      if (!filters.length) return true
-      const isMatch = combineMode === 'or' ? filters.some(Boolean) : filters.every(Boolean)
-      return isMatch
-    })
+    const query = params.toString()
+    const res = await fetchJson<{ data: Contact[]; total: number }>(`/api/contacts/segment${query ? `?${query}` : ''}`)
+    return Array.isArray(res?.data) ? res.data : []
   }
 
   const selectedTestCount =
@@ -1298,7 +1277,21 @@ export const useCampaignNewController = () => {
     : 'Nenhum filtro selecionado'
   const countryData = countriesQuery.data?.data || []
   const stateData = statesQuery.data?.data || []
-  const tagChips = (tagsQuery.data || []).slice(0, 6)
+  // Todas as tags distintas do banco (RPC agregado). A lista completa fica
+  // acessível no painel "Selecionar tags"; nos chips rápidos mostramos as
+  // primeiras N + qualquer tag já selecionada (para nunca "sumir" uma escolha).
+  const allTags = useMemo(() => tagsQuery.data || [], [tagsQuery.data])
+  const tagChips = allTags
+  const tagChipsToShow = useMemo(
+    () => buildVisibleTagChips(allTags, selectedTags, TAG_CHIP_LIMIT),
+    [allTags, selectedTags]
+  )
+  const hiddenTagCount = Math.max(0, allTags.length - tagChipsToShow.length)
+  const tagSearchTerm = tagSearch.trim().toLowerCase()
+  const filteredTags = useMemo(
+    () => allTags.filter((tag) => (tagSearchTerm ? tag.toLowerCase().includes(tagSearchTerm) : true)),
+    [allTags, tagSearchTerm]
+  )
   const countryChips = countryData.map((item) => item.code)
   const stateChips = stateData.map((item) => item.code)
   const countryCounts = useMemo(() => {
@@ -1469,7 +1462,15 @@ export const useCampaignNewController = () => {
     selectedTags,
     setSelectedTags,
     tagsQuery,
+    tagCountsQuery,
     tagChips,
+    tagChipsToShow,
+    hiddenTagCount,
+    showTagsPanel,
+    setShowTagsPanel,
+    tagSearch,
+    setTagSearch,
+    filteredTags,
     tagCounts,
 
     // Countries

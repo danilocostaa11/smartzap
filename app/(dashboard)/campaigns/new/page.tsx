@@ -687,6 +687,52 @@ export default function CampaignsNewRealPage() {
 
               {ctrl.audienceMode === 'segmentos' && (
                 <div className="rounded-2xl border border-[var(--ds-border-default)] bg-[var(--ds-bg-surface)] p-6 shadow-[0_12px_30px_rgba(0,0,0,0.35)]">
+                  <Sheet open={ctrl.showTagsPanel} onOpenChange={ctrl.setShowTagsPanel}>
+                    <SheetContent className="w-full border-l border-[var(--ds-border-default)] bg-[var(--ds-bg-base)] p-0 sm:max-w-md">
+                      <SheetHeader className="border-b border-[var(--ds-border-default)] p-6">
+                        <SheetTitle className="text-[var(--ds-text-primary)]">Selecionar tags</SheetTitle>
+                        <SheetDescription className="text-[var(--ds-text-secondary)]">
+                          Todas as tags dos seus contatos ({ctrl.tagChips.length}). Escolha as que entram no segmento.
+                        </SheetDescription>
+                      </SheetHeader>
+                      <div className="space-y-4 p-6">
+                        <input
+                          className="w-full rounded-xl border border-[var(--ds-border-default)] bg-[var(--ds-bg-elevated)] px-3 py-2 text-sm text-[var(--ds-text-primary)] placeholder:text-[var(--ds-text-muted)]"
+                          placeholder="Buscar tag..."
+                          value={ctrl.tagSearch}
+                          onChange={(event) => ctrl.setTagSearch(event.target.value)}
+                        />
+                        <div className="max-h-[60vh] overflow-y-auto pr-1">
+                          <div className="flex flex-wrap gap-2">
+                            {ctrl.filteredTags.length === 0 && (
+                              <span className="text-xs text-[var(--ds-text-muted)]">Nenhuma tag encontrada.</span>
+                            )}
+                            {ctrl.filteredTags.map((tag) => {
+                              const active = ctrl.selectedTags.includes(tag)
+                              const count = ctrl.tagCounts[tag]
+                              return (
+                                <button
+                                  key={tag}
+                                  type="button"
+                                  onClick={() => ctrl.toggleSelection(tag, ctrl.selectedTags, ctrl.setSelectedTags)}
+                                  className={`rounded-full border px-3 py-1 text-xs ${
+                                    active
+                                      ? 'border-emerald-600 dark:border-emerald-400/40 bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-100'
+                                      : 'border-[var(--ds-border-default)] bg-[var(--ds-bg-elevated)] text-[var(--ds-text-secondary)]'
+                                  }`}
+                                >
+                                  <span>{tag}</span>
+                                  {typeof count === 'number' && (
+                                    <sup className="ml-1 text-[8px] leading-none text-amber-700 dark:text-amber-300">{count}</sup>
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </SheetContent>
+                  </Sheet>
                   <Sheet open={ctrl.showStatesPanel} onOpenChange={ctrl.setShowStatesPanel}>
                     <SheetContent className="w-full border-l border-[var(--ds-border-default)] bg-[var(--ds-bg-base)] p-0 sm:max-w-md">
                       <SheetHeader className="border-b border-[var(--ds-border-default)] p-6">
@@ -803,10 +849,13 @@ export default function CampaignsNewRealPage() {
                         <div>
                           <p className="text-xs uppercase tracking-widest text-[var(--ds-text-muted)]">Tags</p>
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {ctrl.tagChips.length === 0 && (
+                            {ctrl.tagsQuery.isLoading && (
+                              <span className="text-xs text-[var(--ds-text-muted)]">Carregando tags...</span>
+                            )}
+                            {!ctrl.tagsQuery.isLoading && ctrl.tagChips.length === 0 && (
                               <span className="text-xs text-[var(--ds-text-muted)]">Sem tags cadastradas</span>
                             )}
-                            {ctrl.tagChips.map((tag) => {
+                            {ctrl.tagChipsToShow.map((tag) => {
                               const count = ctrl.tagCounts[tag]
                               const active = ctrl.selectedTags.includes(tag)
                               return (
@@ -827,6 +876,19 @@ export default function CampaignsNewRealPage() {
                                 </button>
                               )
                             })}
+                            {!ctrl.tagsQuery.isLoading && ctrl.hiddenTagCount > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  ctrl.setTagSearch('')
+                                  ctrl.setShowTagsPanel(true)
+                                }}
+                                title="Ver todas as tags"
+                                className="rounded-full border border-[var(--ds-border-default)] bg-[var(--ds-bg-elevated)] px-3 py-1 text-xs text-[var(--ds-text-secondary)] hover:border-white/30"
+                              >
+                                +{ctrl.hiddenTagCount}
+                              </button>
+                            )}
                           </div>
                         </div>
                         <div>

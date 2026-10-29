@@ -6,6 +6,7 @@
 
 import { supabase } from './supabase'
 import { redis } from './redis'
+import { collectDistinctTagsFromContacts, fetchAllRows } from './contacts/segment'
 import {
     Campaign,
     Contact,
@@ -500,12 +501,18 @@ export const campaignDb = {
 
 export const contactDb = {
     getAll: async (): Promise<Contact[]> => {
-        const { data, error } = await supabase
-            .from('contacts')
-            .select('*')
-            .order('created_at', { ascending: false })
+        // PostgREST devolve no máximo `max-rows` (1000 por padrão) por resposta.
+        // Pagina até esgotar para que "todos os contatos" seja realmente todos.
+        const { rows: data } = await fetchAllRows<any>((pageIndex) =>
+            supabase
+                .from('contacts')
+                .select('*', pageIndex === 0 ? { count: 'exact' } : undefined),
+            // Ordem estável + determinística entre páginas (created_at pode repetir).
+            { orderBy: 'id' }
+        )
 
-        if (error) throw error
+        // Mantém a ordenação histórica da API (mais recentes primeiro).
+        data.sort((a: any, b: any) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
 
         return (data || []).map(row => ({
             id: row.id,
@@ -1180,6 +1187,15 @@ export const contactDb = {
         const { data, error } = await supabase.rpc('get_contact_tags')
 
         if (error) {
+            // RPC ausente neste projeto (migration não aplicada): agrega em memória
+            // paginando TODOS os contatos, para nunca devolver uma lista parcial.
+            const isRpcMissing =
+                error.code === '42883' || // undefined_function (PostgreSQL)
+                error.message?.includes('Could not find the function') // PostgREST
+            if (isRpcMissing) {
+                console.warn('RPC get_contact_tags not found, using paginated in-memory fallback')
+                return collectDistinctTagsFromContacts()
+            }
             console.error('Failed to get contact tags:', error)
             throw error
         }

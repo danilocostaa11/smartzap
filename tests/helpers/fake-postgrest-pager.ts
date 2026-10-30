@@ -83,7 +83,12 @@ class FakePagedQuery implements PromiseLike<{ data: unknown[] | null; error: nul
 
   or(conditions: string) {
     this.filterLog.push(`or(${conditions})`)
-    // Formato gerado pelo código: tags.cs.["a"],tags.cs.["b"]
+    // Formato gerado pelo código de segmento: tags.cs.["a"],tags.cs.["b"]
+    if (!conditions.startsWith('tags.cs.')) {
+      // Outras condições (ex.: expires_at.is.null,expires_at.gt.<iso>) não são
+      // avaliadas: o fake devolve todas as linhas (suficiente para os testes atuais).
+      return this
+    }
     const parts = conditions.split(/,(?=tags\.cs\.)/)
     const alternatives = parts.map((part) => {
       const match = part.match(/^tags\.cs\.(.+)$/)

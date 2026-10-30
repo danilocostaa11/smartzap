@@ -272,6 +272,60 @@ describe('lib/contacts/segment — countSegmentContacts', () => {
   })
 })
 
+describe('lib/contacts/segment — estimativa e validação usam a MESMA consulta', () => {
+  beforeEach(() => {
+    mocks.supabase.current = null
+  })
+
+  it.each([
+    { label: 'max-rows 1000', maxRows: 1000, total: 1300, firstTagged: 1000 },
+    { label: 'max-rows 100', maxRows: 100, total: 400, firstTagged: 100 },
+  ])(
+    'tag nova em 50 contatos todos além da 1ª página ($label): estimativa = 50 e validação = 50',
+    async ({ maxRows, total, firstTagged }) => {
+      // Caso de produção: estimativa mostrava 50, mas a Validação dizia
+      // "Nenhum contato encontrado para validar" (lista vinha só da 1ª página).
+      const TAG = 'lote-2026-10-30'
+      const tagged = new Set(Array.from({ length: 50 }, (_, i) => firstTagged + i))
+      useContacts(
+        buildFakeContacts(total, (i) => ({ tags: tagged.has(i) ? [TAG, 'base'] : ['base'] })),
+        maxRows
+      )
+      const filters = { tags: [TAG], countries: [], states: [], combine: 'or' as const }
+
+      const estimate = await countSegmentContacts(filters)
+      const recipients = await resolveSegmentContacts(filters)
+
+      expect(estimate).toEqual({ total: 50, matched: 50 })
+      expect(recipients).toHaveLength(estimate.matched)
+      expect(recipients.map((c) => c.id)).toEqual(
+        Array.from(tagged).map((i) => `c-${String(i).padStart(6, '0')}`)
+      )
+      // Sanidade: a abordagem antiga (1ª página + filtro no cliente) daria 0.
+      const firstPageOnly = buildFakeContacts(total, (i) => ({ tags: tagged.has(i) ? [TAG] : [] }))
+        .slice(0, maxRows)
+        .filter((c) => (c.tags as string[]).includes(TAG))
+      expect(firstPageOnly).toHaveLength(0)
+    }
+  )
+
+  it('com filtro de UF, contagem e lista continuam iguais em >1000 contatos', async () => {
+    useContacts(
+      buildFakeContacts(2100, (i) => ({
+        phone: i % 5 === 0 ? `+5521${String(900000000 + i).padStart(9, '0')}` : `+5511${String(900000000 + i).padStart(9, '0')}`,
+        tags: i % 7 === 0 ? ['promo'] : [],
+      }))
+    )
+    const filters = { tags: ['promo'], countries: ['BR'], states: ['RJ'], combine: 'and' as const }
+
+    const estimate = await countSegmentContacts(filters)
+    const recipients = await resolveSegmentContacts(filters)
+
+    expect(estimate.matched).toBe(recipients.length)
+    expect(estimate.matched).toBe(Array.from({ length: 2100 }, (_, i) => i).filter((i) => i % 35 === 0).length)
+  })
+})
+
 describe('lib/contacts/segment — collectDistinctTagsFromContacts', () => {
   beforeEach(() => {
     mocks.supabase.current = null

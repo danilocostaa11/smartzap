@@ -129,11 +129,14 @@ export const useContactsController = (initialData?: ContactsInitialData) => {
     staleTime: CACHE.stats
   });
 
+  // Tags do filtro: a lista vem completa do RSC (initialData) e é revalidada ao
+  // montar — uma tag recém-aplicada (import, bulk, edição) aparece sem esperar o cache.
   const tagsQuery = useQuery({
     queryKey: ['contactTags'],
     queryFn: contactService.getTags,
     initialData: initialData?.tags,
-    staleTime: CACHE.stats,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
 
   const customFieldsQuery = useQuery({

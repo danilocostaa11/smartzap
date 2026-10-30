@@ -2,6 +2,7 @@
 
 import { cache } from 'react'
 import { getSupabaseAdmin } from '@/lib/supabase'
+import { collectDistinctTagsFromContacts, fetchAllRows } from '@/lib/contacts/segment'
 import { PAGINATION } from '@/lib/constants'
 import { ContactStatus } from '@/types'
 import type { Contact, CustomFieldDefinition } from '@/types'
@@ -38,7 +39,10 @@ export const getContactsInitialData = cache(async (): Promise<ContactsInitialDat
   }
 
   // Buscar tudo em paralelo
-  const [contactsResult, tagsResult, customFieldsResult, suppressionsResult, allContactsResult] = await Promise.all([
+  // Tags e stats precisam cobrir TODOS os contatos: um select sem .range() é
+  // truncado pelo PostgREST em max-rows (1000 por padrão), o que escondia tags
+  // novas e zerava contadores em bases maiores.
+  const [contactsResult, allTags, customFieldsResult, suppressionsResult, allContactsResult] = await Promise.all([
     // Primeira página de contatos
     supabase
       .from('contacts')
@@ -46,11 +50,8 @@ export const getContactsInitialData = cache(async (): Promise<ContactsInitialDat
       .order('created_at', { ascending: false })
       .range(0, PAGE_SIZE - 1),
 
-    // Tags únicas
-    supabase
-      .from('contacts')
-      .select('tags')
-      .not('tags', 'is', null),
+    // Tags únicas (paginado até esgotar; mesma sanitização do RPC get_contact_tags)
+    collectDistinctTagsFromContacts(),
 
     // Campos customizados
     supabase
@@ -66,10 +67,10 @@ export const getContactsInitialData = cache(async (): Promise<ContactsInitialDat
       .eq('is_active', true)
       .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString()),
 
-    // Todos os telefones/status para calcular stats
-    supabase
-      .from('contacts')
-      .select('phone,status')
+    // Todos os telefones/status para calcular stats (paginado até esgotar)
+    fetchAllRows<{ phone: string | null; status: string | null }>((pageIndex) =>
+      supabase.from('contacts').select('id,phone,status', pageIndex === 0 ? { count: 'exact' } : undefined)
+    ),
   ])
 
   // Criar mapa de supressões indexado por telefone normalizado
@@ -115,23 +116,16 @@ export const getContactsInitialData = cache(async (): Promise<ContactsInitialDat
     }
   })
 
-  // Extrair tags únicas
-  const allTags = new Set<string>()
-  ;(tagsResult.data || []).forEach(row => {
-    if (Array.isArray(row.tags)) {
-      row.tags.forEach((tag: string) => allTags.add(tag))
-    }
-  })
-
   // Calcular stats com effectiveStatus (supressão tem prioridade)
+  const allContactRows = allContactsResult.rows
   const computedStats = {
-    total: allContactsResult.data?.length || 0,
+    total: allContactsResult.count ?? allContactRows.length,
     active: 0,
     optOut: 0,
     suppressed: 0
   }
 
-  for (const row of allContactsResult.data || []) {
+  for (const row of allContactRows) {
     const phone = String(row.phone || '').trim()
     const normalizedPhone = normalizePhone(phone)
     const isSuppressed = suppressionMap.has(normalizedPhone)
@@ -154,7 +148,7 @@ export const getContactsInitialData = cache(async (): Promise<ContactsInitialDat
       optOut: computedStats.optOut,
       suppressed: computedStats.suppressed
     },
-    tags: Array.from(allTags).toSorted(),
+    tags: allTags,
     customFields: (customFieldsResult.data || []) as CustomFieldDefinition[]
   }
 })

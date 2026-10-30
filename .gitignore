@@ -81,6 +81,8 @@ scripts/*
 !scripts/meta-audit.mjs
 !scripts/nova-instancia.sh
 !scripts/simulate-inbound-burst.mjs
+!scripts/sql/
+!scripts/sql/backfill-opt-out-from-inbound-keywords.sql
 
 # OS
 .DS_Store

@@ -6,6 +6,7 @@ export const runtime = 'nodejs'
 import { getSupabaseAdmin, supabase } from '@/lib/supabase'
 import { normalizePhoneNumber } from '@/lib/phone-formatter'
 import { upsertPhoneSuppression } from '@/lib/phone-suppressions'
+import { applyInboundOptOut, isOptOutKeyword } from '@/lib/contacts/opt-out'
 import { maybeAutoSuppressByFailure } from '@/lib/auto-suppression'
 import {
   mapWhatsAppError,
@@ -138,42 +139,13 @@ function extractInboundText(message: any): string {
   return ''
 }
 
-function isOptOutKeyword(textRaw: string): boolean {
-  const t = String(textRaw || '')
-    .trim()
-    .toLowerCase()
-    // normaliza acentos comuns para facilitar matching
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-
-  if (!t) return false
-
-  // Palavras-chave comuns (PT-BR + EN) — agressivo por requisito.
-  const keywords = [
-    'parar',
-    'pare',
-    'stop',
-    'cancelar',
-    'cancele',
-    'sair',
-    'remover',
-    'remove',
-    'descadastrar',
-    'desinscrever',
-    'unsubscribe',
-    'optout',
-    'opt-out',
-    'nao quero',
-    'não quero',
-    'nao receber',
-    'não receber',
-  ]
-
-  // Match por inclusão para cobrir frases (ex.: "por favor parar")
-  return keywords.some((k) => t.includes(k))
-}
-
-async function markContactOptOutAndSuppress(input: {
+/**
+ * Supressão automática por erro da Meta (ex.: usuário bloqueou o número).
+ * Registra apenas em phone_suppressions — `contacts.status` fica a cargo do
+ * usuário, pois o código de erro não é um pedido explícito do contato.
+ * (Opt-out por palavra-chave usa `applyInboundOptOut`, que também marca OPT_OUT.)
+ */
+async function suppressPhoneFromMetaError(input: {
   phoneRaw: string
   source: string
   reason: string
@@ -181,8 +153,6 @@ async function markContactOptOutAndSuppress(input: {
 }): Promise<void> {
   const phone = normalizePhoneNumber(input.phoneRaw)
 
-  // Apenas registra na tabela de supressões (fonte de verdade para bloqueios automáticos)
-  // NÃO atualiza contacts.status - esse campo é controlado manualmente pelo usuário
   try {
     await upsertPhoneSuppression({
       phone,
@@ -830,7 +800,7 @@ export async function POST(request: NextRequest) {
                 }
 
                 if (isOptOutError(errorCode)) {
-                  await markContactOptOutAndSuppress({
+                  await suppressPhoneFromMetaError({
                     phoneRaw: phone,
                     source: 'meta_opt_out_error',
                     reason: failureReason || `Opt-out detectado pela Meta (código ${errorCode})`,
@@ -964,6 +934,35 @@ export async function POST(request: NextRequest) {
           } catch (inboxError) {
             // Best-effort: don't fail webhook if inbox persist fails
             console.warn('[Webhook] Failed to persist to inbox:', inboxError)
+          }
+
+          // =================================================================
+          // Opt-out real: usuário envia palavra-chave ("Sair", "parar"...)
+          // Roda ANTES de workflows/flows (que podem dar `continue`) e em bloco
+          // próprio, para que nenhum erro/early-exit posterior pule o registro.
+          // A IA continua respondendo normalmente (ex.: confirmando a remoção);
+          // aqui garantimos supressão + contacts.status = OPT_OUT.
+          // =================================================================
+          if (text && isOptOutKeyword(text)) {
+            console.log(`📵 Opt-out keyword detected from ${from}: "${text}"`)
+            try {
+              const optOut = await applyInboundOptOut({
+                phoneRaw: from,
+                source: 'inbound_keyword',
+                reason: 'Usuário solicitou opt-out via mensagem inbound',
+                metadata: {
+                  messageType,
+                  text,
+                  messageId: message?.id || null,
+                  timestamp: message?.timestamp || null,
+                },
+              })
+              console.log(
+                `📵 Opt-out aplicado para ${optOut.phone}: suppressed=${optOut.suppressed}, contactsUpdated=${optOut.contactsUpdated}`
+              )
+            } catch (optOutError) {
+              console.warn('[Webhook] Falha ao aplicar opt-out (best-effort):', optOutError)
+            }
           }
 
           // =================================================================
@@ -1564,22 +1563,6 @@ export async function POST(request: NextRequest) {
             }
           } catch (e) {
             console.warn('[Webhook] Falha ao processar Flow submission (best-effort):', e)
-          }
-
-          // Opt-out real: usuário envia palavra-chave
-          if (text && isOptOutKeyword(text)) {
-            console.log(`📵 Opt-out keyword detected from ${from}: "${text}"`)
-            await markContactOptOutAndSuppress({
-              phoneRaw: from,
-              source: 'inbound_keyword',
-              reason: 'Usuário solicitou opt-out via mensagem inbound',
-              metadata: {
-                messageType,
-                text,
-                messageId: message?.id || null,
-                timestamp: message?.timestamp || null,
-              },
-            })
           }
         }
       }

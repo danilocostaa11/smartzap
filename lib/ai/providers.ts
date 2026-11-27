@@ -154,6 +154,7 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
         icon: '💎',
         models: [
             { id: 'gemini-flash-latest', name: 'Gemini Flash (sempre atual)', description: 'Alias auto-atualizado — recomendado' },
+            { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', description: 'Aceita nível de raciocínio' },
             { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: 'Rápido e eficiente' },
             { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Melhor para tarefas complexas' },
         ],

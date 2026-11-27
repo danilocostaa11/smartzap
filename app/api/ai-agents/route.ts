@@ -48,6 +48,8 @@ const createAgentSchema = z.object({
   // Tool permissions
   allow_reactions: z.boolean().default(true),
   allow_quotes: z.boolean().default(true),
+  // Nível de raciocínio (Gemini 3.x). null = padrão do modelo
+  reasoning_level: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
 })
 
 /**
@@ -152,6 +154,8 @@ export async function POST(request: NextRequest) {
         // Tool permissions
         allow_reactions: data.allow_reactions,
         allow_quotes: data.allow_quotes,
+        // Só envia quando definido: instâncias sem a migration seguem funcionando
+        ...(data.reasoning_level ? { reasoning_level: data.reasoning_level } : {}),
       })
       .select()
       .single()

@@ -68,3 +68,72 @@ export function resolveTemperature(
   if (!supportsTemperature(modelId)) return undefined
   return requested ?? fallback
 }
+
+// =============================================================================
+// Nível de raciocínio (thinking) — Gemini 3.x
+// =============================================================================
+
+/**
+ * Níveis aceitos pela API Gemini em `thinkingConfig.thinkingLevel`.
+ * Ref: https://ai.google.dev/gemini-api/docs/thinking
+ */
+export const REASONING_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
+export type ReasoningLevel = (typeof REASONING_LEVELS)[number]
+
+/**
+ * Piso de `maxOutputTokens` quando um nível de raciocínio é aplicado.
+ * No Gemini os tokens de raciocínio contam dentro do limite de saída; com o
+ * limite padrão do agente (1024–2048) um nível alto pode esgotar o orçamento
+ * antes da resposta. O tamanho da resposta continua guiado pelo prompt.
+ */
+export const REASONING_MIN_OUTPUT_TOKENS = 8192
+
+const GEMINI_3_RE = /^gemini-3(?:[.-]|$)/i
+
+/** Indica se o modelo aceita `thinkingLevel` (família Gemini 3.x). */
+export function supportsReasoningLevel(modelId: string | null | undefined): boolean {
+  const id = stripProviderPrefix((modelId || '').trim().toLowerCase())
+  return GEMINI_3_RE.test(id)
+}
+
+/** Normaliza o valor salvo no agente; inválido/vazio → null (padrão do modelo). */
+export function normalizeReasoningLevel(value: unknown): ReasoningLevel | null {
+  if (typeof value !== 'string') return null
+  const v = value.trim().toLowerCase()
+  return (REASONING_LEVELS as readonly string[]).includes(v) ? (v as ReasoningLevel) : null
+}
+
+/**
+ * Nível efetivo para a chamada: só quando o modelo suporta e o agente definiu.
+ * Deve receber o id de modelo JÁ RESOLVIDO para o provider ativo.
+ */
+export function resolveReasoningLevel(
+  modelId: string | null | undefined,
+  requested: unknown,
+): ReasoningLevel | null {
+  if (!supportsReasoningLevel(modelId)) return null
+  return normalizeReasoningLevel(requested)
+}
+
+/**
+ * `providerOptions` para o AI SDK. `undefined` quando não há nível a aplicar,
+ * preservando exatamente o payload atual dos demais agentes/provedores.
+ */
+export function resolveProviderOptions(
+  modelId: string | null | undefined,
+  requested: unknown,
+): { google: { thinkingConfig: { thinkingLevel: ReasoningLevel } } } | undefined {
+  const level = resolveReasoningLevel(modelId, requested)
+  if (!level) return undefined
+  return { google: { thinkingConfig: { thinkingLevel: level } } }
+}
+
+/** `maxOutputTokens` com piso quando há nível de raciocínio aplicado. */
+export function resolveMaxOutputTokens(
+  modelId: string | null | undefined,
+  requested: unknown,
+  maxTokens: number,
+): number {
+  if (!resolveReasoningLevel(modelId, requested)) return maxTokens
+  return Math.max(maxTokens, REASONING_MIN_OUTPUT_TOKENS)
+}

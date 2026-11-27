@@ -120,6 +120,11 @@ export function registerAgentsTools(server: McpServer) {
         handoff_instructions: z.string().optional().nullable(),
         allow_reactions: z.boolean().optional(),
         allow_quotes: z.boolean().optional(),
+        reasoning_level: z
+          .enum(['minimal', 'low', 'medium', 'high'])
+          .nullable()
+          .optional()
+          .describe('Nível de raciocínio (só Gemini 3.x). null = padrão do modelo'),
       },
     },
     async ({ id, ...data }) => {

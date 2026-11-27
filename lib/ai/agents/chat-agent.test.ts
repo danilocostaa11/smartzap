@@ -424,3 +424,45 @@ describe('processChatAgent — retry em erros transitórios do modelo', () => {
     expect(mocks.generateText).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('processChatAgent — nível de raciocínio (Gemini 3.x) nas respostas do WhatsApp', () => {
+  beforeEach(() => {
+    mocks.generateText.mockReset().mockImplementation(respondOk)
+    mocks.logInserts.length = 0
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('gemini-3.8-flash + reasoning_level high → envia thinkingLevel high e piso de tokens', async () => {
+    const { createDirectModel } = await import('@/lib/ai/direct-model')
+    vi.mocked(createDirectModel).mockResolvedValueOnce({
+      model: { modelId: 'gemini-3.8-flash' },
+      modelId: 'gemini-3.8-flash',
+    } as never)
+
+    const result = await processChatAgent({
+      agent: { ...agent, model: 'gemini-3.8-flash', reasoning_level: 'high' },
+      conversation,
+      messages: pendingHistory,
+    })
+
+    expect(result.success).toBe(true)
+    const args = mocks.generateText.mock.calls[0][0]
+    expect(args.providerOptions).toEqual({ google: { thinkingConfig: { thinkingLevel: 'high' } } })
+    expect(args.maxOutputTokens).toBe(8192)
+  })
+
+  it('agente sem reasoning_level (outros agentes) → payload inalterado', async () => {
+    const result = await processChatAgent({ agent, conversation, messages: pendingHistory })
+
+    expect(result.success).toBe(true)
+    const args = mocks.generateText.mock.calls[0][0]
+    expect(args.providerOptions).toBeUndefined()
+    expect(args.maxOutputTokens).toBe(agent.max_tokens)
+  })
+})

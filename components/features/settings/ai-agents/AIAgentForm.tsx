@@ -38,7 +38,7 @@ import {
 import type { AIAgent, EmbeddingProvider, RerankProvider } from '@/types'
 import type { CreateAIAgentParams, UpdateAIAgentParams } from '@/services/aiAgentService'
 import { DEFAULT_MODEL_ID, AI_PROVIDERS, type AIProvider } from '@/lib/ai/model'
-import { supportsTemperature } from '@/lib/ai/model-capabilities'
+import { supportsTemperature, supportsReasoningLevel, normalizeReasoningLevel, type ReasoningLevel } from '@/lib/ai/model-capabilities'
 import { EMBEDDING_PROVIDERS, DEFAULT_EMBEDDING_CONFIG } from '@/lib/ai/embeddings'
 import { RERANK_PROVIDERS } from '@/lib/ai/reranking'
 
@@ -88,6 +88,8 @@ export function AIAgentForm({
   const [bookingToolEnabled, setBookingToolEnabled] = useState(false)
   const [allowReactions, setAllowReactions] = useState(true)
   const [allowQuotes, setAllowQuotes] = useState(true)
+  // Nível de raciocínio (Gemini 3.x). null = padrão do modelo
+  const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel | null>(null)
 
   // RAG: Embedding config
   const [embeddingProvider, setEmbeddingProvider] = useState<EmbeddingProvider>(DEFAULT_EMBEDDING_CONFIG.provider)
@@ -224,6 +226,7 @@ export function AIAgentForm({
       setBookingToolEnabled(agent.booking_tool_enabled ?? false)
       setAllowReactions(agent.allow_reactions ?? true)
       setAllowQuotes(agent.allow_quotes ?? true)
+      setReasoningLevel(normalizeReasoningLevel(agent.reasoning_level))
       // RAG config
       setEmbeddingProvider(agent.embedding_provider || DEFAULT_EMBEDDING_CONFIG.provider)
       setEmbeddingModel(agent.embedding_model || DEFAULT_EMBEDDING_CONFIG.model)
@@ -250,6 +253,7 @@ export function AIAgentForm({
       setBookingToolEnabled(false)
       setAllowReactions(true)
       setAllowQuotes(true)
+      setReasoningLevel(null)
       // RAG config defaults
       setEmbeddingProvider(DEFAULT_EMBEDDING_CONFIG.provider)
       setEmbeddingModel(DEFAULT_EMBEDDING_CONFIG.model)
@@ -292,6 +296,11 @@ export function AIAgentForm({
       rerank_provider: rerankEnabled ? rerankProvider : null,
       rerank_model: rerankEnabled ? rerankModel : null,
       rerank_top_k: rerankTopK,
+      // Só envia quando há valor (ou para limpar um valor salvo): instâncias sem a
+      // migration reasoning_level continuam salvando normalmente
+      ...(reasoningLevel || agent?.reasoning_level
+        ? { reasoning_level: supportsReasoningLevel(model) ? reasoningLevel : null }
+        : {}),
     }
 
     await onSubmit(params)
@@ -440,6 +449,31 @@ export function AIAgentForm({
                   </div>
                 )}
               </div>
+
+              {/* Reasoning level (Gemini 3.x) */}
+              {supportsReasoningLevel(model) && (
+                <div className="space-y-2">
+                  <Label htmlFor="reasoning-level">Nível de raciocínio</Label>
+                  <Select
+                    value={reasoningLevel ?? 'default'}
+                    onValueChange={(v) => setReasoningLevel(v === 'default' ? null : normalizeReasoningLevel(v))}
+                  >
+                    <SelectTrigger id="reasoning-level">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">Padrão do modelo</SelectItem>
+                      <SelectItem value="minimal">Mínimo</SelectItem>
+                      <SelectItem value="low">Baixo</SelectItem>
+                      <SelectItem value="medium">Médio</SelectItem>
+                      <SelectItem value="high">Alto</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-[var(--ds-text-muted)]">
+                    Mais raciocínio melhora respostas complexas, mas aumenta a latência e o custo.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* ═══════════════════════════════════════════════════════════════

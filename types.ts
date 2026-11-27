@@ -644,6 +644,8 @@ export interface AIAgent {
   // Tool permissions
   allow_reactions: boolean;
   allow_quotes: boolean;
+  // Nível de raciocínio (Gemini 3.x). null = padrão do modelo
+  reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | null;
   created_at: string;
   updated_at: string;
 }

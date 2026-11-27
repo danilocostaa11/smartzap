@@ -40,6 +40,8 @@ export interface CreateAIAgentParams {
   // Tool permissions
   allow_reactions?: boolean
   allow_quotes?: boolean
+  // Nível de raciocínio (Gemini 3.x). null = padrão do modelo
+  reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | null
 }
 
 export interface UpdateAIAgentParams {
@@ -71,6 +73,8 @@ export interface UpdateAIAgentParams {
   // Tool permissions
   allow_reactions?: boolean
   allow_quotes?: boolean
+  // Nível de raciocínio (Gemini 3.x). null = padrão do modelo
+  reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | null
 }
 
 // =============================================================================

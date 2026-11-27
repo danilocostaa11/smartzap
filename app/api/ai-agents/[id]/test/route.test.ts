@@ -164,3 +164,56 @@ describe('POST /api/ai-agents/[id]/test — chave de embedding na busca RAG', ()
     expect(mocks.findRelevantContent).not.toHaveBeenCalled()
   })
 })
+
+describe('POST /api/ai-agents/[id]/test — nível de raciocínio (Gemini 3.x)', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mocks.generateText.mockReset().mockResolvedValue({
+      staticToolCalls: [{ toolName: 'respond', input: { message: 'Olá!', sentiment: 'neutral', confidence: 0.5 } }],
+    })
+    mocks.hasIndexedContent.mockReset().mockResolvedValue(false)
+    mocks.resolveEmbeddingApiKeyForAgent
+      .mockReset()
+      .mockResolvedValue({ apiKey: null, providerLabel: 'Google Gemini', provider: 'google' })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('teste interno com gemini-3.8-flash + high envia thinkingLevel high', async () => {
+    const { createDirectModel } = await import('@/lib/ai/direct-model')
+    vi.mocked(createDirectModel).mockResolvedValueOnce({
+      model: { modelId: 'gemini-3.8-flash' },
+      modelId: 'gemini-3.8-flash',
+    } as never)
+    mocks.supabase.current = createFakeSupabase({
+      tables: {
+        ai_agents: () => ({ data: { ...agent, model: 'gemini-3.8-flash', reasoning_level: 'high' }, error: null }),
+        ai_knowledge_files: () => ({ data: null, error: null }),
+      },
+    })
+
+    const result = await callRoute()
+
+    expect(result.status).toBe(200)
+    const args = mocks.generateText.mock.calls[0][0]
+    expect(args.providerOptions).toEqual({ google: { thinkingConfig: { thinkingLevel: 'high' } } })
+    expect(args.maxOutputTokens).toBe(8192)
+  })
+
+  it('agente Claude sem reasoning_level: sem providerOptions', async () => {
+    mocks.supabase.current = createFakeSupabase({
+      tables: {
+        ai_agents: () => ({ data: agent, error: null }),
+        ai_knowledge_files: () => ({ data: null, error: null }),
+      },
+    })
+
+    const result = await callRoute()
+
+    expect(result.status).toBe(200)
+    expect(mocks.generateText.mock.calls[0][0].providerOptions).toBeUndefined()
+  })
+})

@@ -19,7 +19,7 @@ import { z } from 'zod'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { getAiDirectConfig } from '@/lib/ai/ai-center-config'
 import { createDirectModel } from '@/lib/ai/direct-model'
-import { resolveTemperature } from '@/lib/ai/model-capabilities'
+import { resolveMaxOutputTokens, resolveProviderOptions, resolveTemperature } from '@/lib/ai/model-capabilities'
 import { classifyModelError, describeModelError } from '@/lib/ai/model-errors'
 import { selectPendingInboundMessages } from '@/lib/inbox/ai-debounce'
 import type { AIAgent, InboxConversation, InboxMessage } from '@/types'
@@ -446,6 +446,9 @@ export async function processChatAgent(
   const model = await withDevTools(rawModel, { name: `agente:${agent.name}` })
   // Modelos que rejeitam `temperature` (Claude 5.x+) recebem undefined → campo omitido.
   const temperature = resolveTemperature(modelId, agent.temperature)
+  // Nível de raciocínio (Gemini 3.x): undefined para os demais → payload inalterado
+  const providerOptions = resolveProviderOptions(modelId, agent.reasoning_level)
+  const maxOutputTokens = resolveMaxOutputTokens(modelId, agent.reasoning_level, agent.max_tokens ?? DEFAULT_MAX_TOKENS)
   console.log(`[chat-agent] Using ${directConfig.provider}/${modelId}${temperature === undefined ? ' (temperature omitida: modelo não suporta)' : ''}`)
 
   // Check if agent has indexed content in pgvector
@@ -819,7 +822,8 @@ ${prefetchText}`
             // Para quando respond for chamado OU após 5 steps (busca/reação + respond)
             stopWhen: (event) => stopCondition() || stepCountIs(5)(event),
             temperature,
-            maxOutputTokens: agent.max_tokens ?? DEFAULT_MAX_TOKENS,
+            maxOutputTokens,
+            providerOptions,
             abortSignal: abortController.signal,
             // Retry é responsabilidade de callModelWithRetry (política única e previsível)
             maxRetries: 0,

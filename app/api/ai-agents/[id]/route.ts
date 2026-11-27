@@ -48,6 +48,8 @@ const updateAgentSchema = z.object({
   // Tool permissions
   allow_reactions: z.boolean().optional(),
   allow_quotes: z.boolean().optional(),
+  // Nível de raciocínio (Gemini 3.x). null = padrão do modelo
+  reasoning_level: z.enum(['minimal', 'low', 'medium', 'high']).nullable().optional(),
 })
 
 /**

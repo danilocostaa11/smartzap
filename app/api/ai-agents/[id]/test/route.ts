@@ -11,7 +11,7 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { z } from 'zod'
 import { getAiDirectConfig } from '@/lib/ai/ai-center-config'
 import { createDirectModel } from '@/lib/ai/direct-model'
-import { resolveTemperature } from '@/lib/ai/model-capabilities'
+import { resolveMaxOutputTokens, resolveProviderOptions, resolveTemperature } from '@/lib/ai/model-capabilities'
 import {
   findRelevantContent,
   buildEmbeddingConfigFromAgent,
@@ -258,7 +258,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
       messages: [{ role: 'user' as const, content: message }],
       // undefined para modelos que rejeitam `temperature` (Claude 5.x+)
       temperature: resolveTemperature(targetModelId, agent.temperature),
-      maxOutputTokens: agent.max_tokens ?? 1024,
+      maxOutputTokens: resolveMaxOutputTokens(targetModelId, agent.reasoning_level, agent.max_tokens ?? 1024),
+      // thinkingLevel só para Gemini 3.x com nível definido; demais agentes: undefined
+      providerOptions: resolveProviderOptions(targetModelId, agent.reasoning_level),
       tools,
       toolChoice: 'required',
       stopWhen: stepCountIs(5),

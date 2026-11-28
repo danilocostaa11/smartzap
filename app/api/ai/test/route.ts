@@ -16,7 +16,8 @@ import { getSupabaseAdmin } from '@/lib/supabase'
 import { ContactStatus, type AIAgent, type InboxConversation, type InboxMessage } from '@/types'
 
 // Timeout de 2 minutos (suficiente para testes)
-export const maxDuration = 120
+// Mesmo limite de /api/ai/respond: respostas com raciocínio alto passam de 120s
+export const maxDuration = 300
 
 export const dynamic = 'force-dynamic'
 
@@ -200,6 +201,8 @@ export async function POST(req: NextRequest) {
       agent,
       conversation: mockConversation,
       messages: mockMessages,
+      // Mesma margem da rota de produção: a IA termina antes do limite da função
+      deadlineAt: startTime + maxDuration * 1000 - 40_000,
     })
 
     const latencyMs = Date.now() - startTime

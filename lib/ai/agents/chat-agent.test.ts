@@ -466,3 +466,117 @@ describe('processChatAgent — nível de raciocínio (Gemini 3.x) nas respostas 
     expect(args.maxOutputTokens).toBe(agent.max_tokens)
   })
 })
+
+describe('processChatAgent — orçamento de tempo (timeout por tentativa e retries)', () => {
+  /** Mesmo deadline que /api/ai/respond passa: maxDuration 300s - 40s de margem. */
+  const ROUTE_BUDGET_MS = 260_000
+  const liaAgent: AIAgent = { ...agent, model: 'gemini-3.8-flash', reasoning_level: 'high' }
+
+  async function useGemini38() {
+    const { createDirectModel } = await import('@/lib/ai/direct-model')
+    vi.mocked(createDirectModel).mockResolvedValueOnce({
+      model: { modelId: 'gemini-3.8-flash' },
+      modelId: 'gemini-3.8-flash',
+    } as never)
+  }
+
+  /** Timeouts de tentativa pedidos ao setTimeout (backoffs de 1s/3s ficam de fora). */
+  const attemptTimeouts = () => requestedDelays.filter((d) => d >= 10_000)
+
+  beforeEach(() => {
+    mocks.generateText.mockReset()
+    mocks.logInserts.length = 0
+    requestedDelays = []
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const realSetTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+      requestedDelays.push(ms ?? 0)
+      return realSetTimeout(fn, Math.min(ms ?? 0, 5))
+    }) as typeof setTimeout)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('agente sem raciocínio: mantém o teto de 90s por tentativa e os retries de timeout', async () => {
+    mocks.generateText.mockImplementation(hangUntilAborted)
+
+    const result = await processChatAgent({ agent, conversation, messages: pendingHistory, deadlineAt: Date.now() + ROUTE_BUDGET_MS })
+
+    expect(mocks.generateText).toHaveBeenCalledTimes(3)
+    expect(attemptTimeouts()).toEqual([90_000, 90_000, 90_000])
+    expect(result.success).toBe(false)
+  })
+
+  it('Lia (3.8 Flash High): a tentativa recebe todo o orçamento da função (> 144s), não 90s', async () => {
+    await useGemini38()
+    mocks.generateText.mockImplementation(respondOk)
+
+    const result = await processChatAgent({ agent: liaAgent, conversation, messages: pendingHistory, deadlineAt: Date.now() + ROUTE_BUDGET_MS })
+
+    expect(result.success).toBe(true)
+    expect(mocks.generateText).toHaveBeenCalledTimes(1)
+    const [timeout] = attemptTimeouts()
+    expect(timeout).toBeGreaterThan(144_000)
+    expect(timeout).toBeLessThanOrEqual(ROUTE_BUDGET_MS)
+    expect(timeout).toBeGreaterThan(ROUTE_BUDGET_MS - 5_000)
+  })
+
+  it('Lia: timeout da tentativa longa NÃO reinicia (sem 3×90s, sem estourar o limite)', async () => {
+    await useGemini38()
+    mocks.generateText.mockImplementation(hangUntilAborted)
+
+    const result = await processChatAgent({ agent: liaAgent, conversation, messages: pendingHistory, deadlineAt: Date.now() + ROUTE_BUDGET_MS })
+
+    expect(mocks.generateText).toHaveBeenCalledTimes(1)
+    expect(attemptTimeouts()).toHaveLength(1)
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/timed out/i)
+    // Falha real continua indo para handoff pela rota
+    expect(result.response?.shouldHandoff).toBe(true)
+  })
+
+  it('Lia: erro rápido (503) no início ainda é repetido, com o tempo restante', async () => {
+    await useGemini38()
+    mocks.generateText
+      .mockRejectedValueOnce(apiError(503, 'overloaded', 'Service Unavailable'))
+      .mockImplementationOnce(respondOk)
+
+    const result = await processChatAgent({ agent: liaAgent, conversation, messages: pendingHistory, deadlineAt: Date.now() + ROUTE_BUDGET_MS })
+
+    expect(result.success).toBe(true)
+    expect(mocks.generateText).toHaveBeenCalledTimes(2)
+    expect(requestedDelays).toContain(1000)
+    for (const t of attemptTimeouts()) expect(t).toBeGreaterThan(144_000)
+  })
+
+  it('Lia: com menos de 120s restantes, não inicia nova tentativa longa', async () => {
+    await useGemini38()
+    mocks.generateText.mockRejectedValue(apiError(503, 'overloaded', 'Service Unavailable'))
+
+    const result = await processChatAgent({ agent: liaAgent, conversation, messages: pendingHistory, deadlineAt: Date.now() + 100_000 })
+
+    expect(mocks.generateText).toHaveBeenCalledTimes(1)
+    expect(result.success).toBe(false)
+  })
+
+  it('sem tempo para retry de "não chamou respond": usa o texto gerado em vez de nova chamada', async () => {
+    mocks.generateText.mockResolvedValue({
+      text: 'Custa R$ 10.',
+      steps: [],
+      finishReason: 'stop',
+      response: {},
+      warnings: [],
+      usage: {},
+    })
+
+    const result = await processChatAgent({ agent, conversation, messages: pendingHistory, deadlineAt: Date.now() + 5_000 })
+
+    expect(mocks.generateText).toHaveBeenCalledTimes(1)
+    expect(result.success).toBe(true)
+    expect(result.response?.message).toBe('Custa R$ 10.')
+  })
+})

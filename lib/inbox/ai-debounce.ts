@@ -28,8 +28,13 @@ import type { InboxMessage } from '@/types'
 /** Fallback quando não há agente vinculado — alinhado ao default da coluna ai_agents.debounce_ms. */
 export const DEFAULT_AI_DEBOUNCE_MS = 5000
 
-/** TTL do lock de conversa (segundos). Cobre geração + envio com typing; maxDuration da rota é 300s. */
-export const AI_CONVERSATION_LOCK_TTL_SECONDS = 180
+/**
+ * TTL do lock de conversa (segundos). Precisa ser MAIOR que o maxDuration da rota
+ * /api/ai/respond (300s): uma resposta com raciocínio alto pode usar ~260s de geração
+ * + envio com typing. Com TTL menor, o lock expirava no meio da geração e outro job
+ * da mesma conversa podia gerar uma segunda resposta em paralelo.
+ */
+export const AI_CONVERSATION_LOCK_TTL_SECONDS = 330
 
 /** TTL do marcador "última resposta" (segundos). Só precisa sobreviver entre um burst e o próximo. */
 export const AI_LAST_ANSWERED_TTL_SECONDS = 60 * 60 * 24 * 7

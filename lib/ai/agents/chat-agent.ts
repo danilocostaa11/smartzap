@@ -19,7 +19,8 @@ import { z } from 'zod'
 import { getSupabaseAdmin } from '@/lib/supabase'
 import { getAiDirectConfig } from '@/lib/ai/ai-center-config'
 import { createDirectModel } from '@/lib/ai/direct-model'
-import { resolveMaxOutputTokens, resolveProviderOptions, resolveTemperature } from '@/lib/ai/model-capabilities'
+import { resolveMaxOutputTokens, resolveProviderOptions, resolveReasoningLevel, resolveTemperature } from '@/lib/ai/model-capabilities'
+import { attemptTimeoutMs as computeAttemptTimeoutMs, canStartAttempt } from './attempt-budget'
 import { classifyModelError, describeModelError } from '@/lib/ai/model-errors'
 import { selectPendingInboundMessages } from '@/lib/inbox/ai-debounce'
 import type { AIAgent, InboxConversation, InboxMessage } from '@/types'
@@ -238,7 +239,6 @@ export type SupportResponse = z.infer<typeof supportResponseSchema>
 // =============================================================================
 
 const DEFAULT_MAX_TOKENS = 2048
-const AI_TIMEOUT_MS = 90_000 // 90 segundos - timeout para chamadas de IA (considera RAG + tools)
 const MAX_TOOL_RETRIES = 2 // Tentativas extras quando LLM não chama respond tool
 
 /**
@@ -251,8 +251,6 @@ export const MODEL_RETRY_DELAYS_MS = [1_000, 3_000] as const
 const MAX_MODEL_RETRIES = MODEL_RETRY_DELAYS_MS.length
 /** Orçamento total default quando o chamador não informa `deadlineAt`. */
 const DEFAULT_PROCESSING_BUDGET_MS = 240_000
-/** Tempo mínimo que precisa sobrar (após o backoff) para valer a pena tentar de novo. */
-const MIN_RETRY_ATTEMPT_BUDGET_MS = 10_000
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
@@ -449,6 +447,9 @@ export async function processChatAgent(
   // Nível de raciocínio (Gemini 3.x): undefined para os demais → payload inalterado
   const providerOptions = resolveProviderOptions(modelId, agent.reasoning_level)
   const maxOutputTokens = resolveMaxOutputTokens(modelId, agent.reasoning_level, agent.max_tokens ?? DEFAULT_MAX_TOKENS)
+  // Com nível de raciocínio a resposta pode levar minutos: cada tentativa usa o tempo
+  // restante até o deadline em vez do teto de 90s (ver attempt-budget.ts).
+  const longRunning = resolveReasoningLevel(modelId, agent.reasoning_level) !== null
   console.log(`[chat-agent] Using ${directConfig.provider}/${modelId}${temperature === undefined ? ' (temperature omitida: modelo não suporta)' : ''}`)
 
   // Check if agent has indexed content in pgvector
@@ -801,8 +802,8 @@ ${prefetchText}`
 
       for (;;) {
         // Timeout AbortController - previne que chamadas de IA fiquem penduradas.
-        // Cada tentativa recebe no máximo AI_TIMEOUT_MS, limitado ao que resta do deadline.
-        const attemptTimeoutMs = Math.max(1_000, Math.min(AI_TIMEOUT_MS, deadlineAt - Date.now()))
+        // Curta: no máximo 90s, limitado ao deadline. Longa (raciocínio): todo o tempo restante.
+        const attemptTimeoutMs = computeAttemptTimeoutMs({ longRunning, deadlineAt, now: Date.now() })
         const abortController = new AbortController()
         const timeoutId = setTimeout(() => {
           console.error(`[chat-agent] ⏱️ AI call timed out after ${attemptTimeoutMs}ms`)
@@ -853,12 +854,14 @@ ${prefetchText}`
           }
 
           const delayMs = MODEL_RETRY_DELAYS_MS[modelRetries]
-          const fitsDeadline = delayMs !== undefined && Date.now() + delayMs + MIN_RETRY_ATTEMPT_BUDGET_MS <= deadlineAt
+          const fitsDeadline =
+            delayMs !== undefined &&
+            canStartAttempt({ longRunning, deadlineAt, now: Date.now(), delayMs, previousTimedOut: timedOut })
 
           if (kind === 'fatal' || delayMs === undefined || !fitsDeadline) {
             if (kind !== 'fatal') {
               console.error(
-                `[chat-agent] 🛑 Not retrying (${delayMs === undefined ? `retries exhausted: ${modelRetries}/${MAX_MODEL_RETRIES}` : 'not enough time before deadline'})`
+                `[chat-agent] 🛑 Not retrying (${delayMs === undefined ? `retries exhausted: ${modelRetries}/${MAX_MODEL_RETRIES}` : timedOut && longRunning ? 'long attempt used the whole budget' : 'not enough time before deadline'})`
               )
             }
             if (timedOut) throw new Error(`AI call timed out after ${Math.round(attemptTimeoutMs / 1000)}s`)
@@ -873,6 +876,12 @@ ${prefetchText}`
     }
 
     while (!hasResponded && retryCount <= MAX_TOOL_RETRIES) {
+      // Retry por "não chamou respond" só se ainda couber uma tentativa inteira; senão
+      // segue para o fallback (texto já gerado) em vez de estourar o limite da função.
+      if (retryCount > 0 && !canStartAttempt({ longRunning, deadlineAt, now: Date.now() })) {
+        console.warn(`[chat-agent] 🛑 Skipping respond-tool retry ${retryCount}/${MAX_TOOL_RETRIES}: not enough time before deadline`)
+        break
+      }
       // Se é retry, adiciona instrução reforçada ao system prompt
       let currentSystemPrompt = systemPrompt
       // Usa cópia do array base para não acumular contexto de retries entre iterações

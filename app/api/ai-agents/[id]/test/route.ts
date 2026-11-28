@@ -20,6 +20,10 @@ import {
 } from '@/lib/ai/rag-store'
 import type { AIAgent } from '@/types'
 
+// Explícito (antes dependia do default da plataforma): o teste interno com raciocínio
+// alto já levou 144s; precisa do mesmo limite de /api/ai/respond.
+export const maxDuration = 300
+
 // =============================================================================
 // Response Schema (dynamic based on handoff_enabled - same as chat-agent)
 // =============================================================================
